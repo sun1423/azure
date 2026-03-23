@@ -1,0 +1,97 @@
+name: Deploy Backend to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Install containerapp extension
+        run: |
+          az extension add --name containerapp --upgrade -y
+          az provider register --namespace Microsoft.App --wait
+          az provider register --namespace Microsoft.OperationalInsights --wait
+
+      - name: Create or Update Container App
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}"
+          EXISTS=$(az containerapp show \
+            --name autodeploy-backend \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --query "name" -o tsv 2>/dev/null || echo "")
+
+          if [ -z "$EXISTS" ]; then
+            echo "Creating backend Container App..."
+            az containerapp create \
+              --name autodeploy-backend \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --environment ${{ secrets.ACA_ENVIRONMENT }} \
+              --image $IMAGE \
+              --target-port 8080 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --secrets \
+                gemini-key="${{ secrets.GEMINI_KEY }}" \
+                gh-pat="${{ secrets.GH_PAT }}" \
+                gh-username="${{ secrets.GH_USERNAME }}" \
+                gh-repo="${{ secrets.GH_REPO }}" \
+                dh-username="${{ secrets.DOCKERHUB_USERNAME }}" \
+                azure-rg="${{ secrets.AZURE_RESOURCE_GROUP }}" \
+                aca-env="${{ secrets.ACA_ENVIRONMENT }}" \
+              --env-vars \
+                GEMINI_KEY=secretref:gemini-key \
+                GH_PAT=secretref:gh-pat \
+                GH_USERNAME=secretref:gh-username \
+                GH_REPO=secretref:gh-repo \
+                DH_USERNAME=secretref:dh-username \
+                AZURE_RG=secretref:azure-rg \
+                ACA_ENV=secretref:aca-env
+          else
+            echo "Updating backend Container App..."
+            az containerapp update \
+              --name autodeploy-backend \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --image $IMAGE
+          fi
+
+      - name: Print backend URL
+        run: |
+          URL=$(az containerapp show \
+            --name autodeploy-backend \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "======================================"
+          echo "✅ Backend URL: https://$URL"
+          echo "======================================"
+          echo "Paste this URL into your GitHub Pages site under ⚙ Backend URL"
