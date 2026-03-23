@@ -26,7 +26,11 @@ DH_TOKEN           = os.environ.get("DH_TOKEN", "")
 AZURE_RG           = os.environ.get("AZURE_RG", "")
 ACA_ENV            = os.environ.get("ACA_ENV", "")
 ACR_NAME           = os.environ.get("ACR_NAME", "")
-AZURE_CREDENTIALS = os.environ.get("AZURE_CREDENTIALS", "")
+AZURE_CREDENTIALS  = os.environ.get("AZURE_CREDENTIALS", "")
+AZURE_CLIENT_ID    = os.environ.get("AZURE_CLIENT_ID", "")
+AZURE_CLIENT_SECRET= os.environ.get("AZURE_CLIENT_SECRET", "")
+AZURE_TENANT_ID    = os.environ.get("AZURE_TENANT_ID", "")
+AZURE_SUB_ID       = os.environ.get("AZURE_SUB_ID", "")
 
 # Login to Azure on startup
 # Try managed identity first (best for ACA), fallback to service principal
@@ -247,24 +251,25 @@ async def deploy(req: DeployRequest):
     image_tag    = f"{ACR_NAME}.azurecr.io/{project_name}:latest"
 
     # Login to Azure before doing anything
-    if not AZURE_CREDENTIALS:
-        raise HTTPException(500, "AZURE_CREDENTIALS not set in container environment")
-    try:
-        creds = json.loads(AZURE_CREDENTIALS)
-        login = subprocess.run([
-            "az", "login", "--service-principal",
-            "--username", creds.get("clientId", ""),
-            "--password", creds.get("clientSecret", ""),
-            "--tenant",   creds.get("tenantId", "")
-        ], capture_output=True, text=True)
-        if login.returncode != 0:
-            raise HTTPException(500, f"Azure login failed: {login.stderr}")
-        subprocess.run([
-            "az", "account", "set",
-            "--subscription", creds.get("subscriptionId", "")
-        ], capture_output=True, text=True)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "AZURE_CREDENTIALS is not valid JSON")
+    client_id     = AZURE_CLIENT_ID
+    client_secret = AZURE_CLIENT_SECRET
+    tenant_id     = AZURE_TENANT_ID
+    sub_id        = AZURE_SUB_ID
+
+    if not client_id:
+        raise HTTPException(500, "Azure credentials not set. Need AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, AZURE_SUB_ID")
+
+    login = subprocess.run([
+        "az", "login", "--service-principal",
+        "--username", client_id,
+        "--password", client_secret,
+        "--tenant",   tenant_id
+    ], capture_output=True, text=True)
+    if login.returncode != 0:
+        raise HTTPException(500, f"Azure login failed: {login.stderr}")
+    subprocess.run([
+        "az", "account", "set", "--subscription", sub_id
+    ], capture_output=True, text=True)
 
     # Write files to temp directory
     with tempfile.TemporaryDirectory() as tmpdir:
