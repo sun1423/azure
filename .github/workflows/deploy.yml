@@ -24,24 +24,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Inject secrets
-        env:
-          GEMINI_KEY:  ${{ secrets.GEMINI_KEY }}
-          GH_PAT:      ${{ secrets.GH_PAT }}
-          GH_USERNAME: ${{ secrets.GH_USERNAME }}
-          GH_REPO:     ${{ secrets.GH_REPO }}
-          DH_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DH_TOKEN:    ${{ secrets.DOCKERHUB_TOKEN }}
-          AZURE_RG:    ${{ secrets.AZURE_RESOURCE_GROUP }}
-          ACA_ENV:     ${{ secrets.ACA_ENVIRONMENT }}
         run: |
-          sed -i "s|%%GEMINI_KEY%%|${GEMINI_KEY}|g"   index.html
-          sed -i "s|%%GH_PAT%%|${GH_PAT}|g"           index.html
-          sed -i "s|%%GH_USERNAME%%|${GH_USERNAME}|g"  index.html
-          sed -i "s|%%GH_REPO%%|${GH_REPO}|g"          index.html
-          sed -i "s|%%DH_USERNAME%%|${DH_USERNAME}|g"  index.html
-          sed -i "s|%%DH_TOKEN%%|${DH_TOKEN}|g"        index.html
-          sed -i "s|%%AZURE_RG%%|${AZURE_RG}|g"        index.html
-          sed -i "s|%%ACA_ENV%%|${ACA_ENV}|g"          index.html
+          sed -i "s|%%GEMINI_KEY%%|${{ secrets.GEMINI_KEY }}|g"               index.html
+          sed -i "s|%%GH_PAT%%|${{ secrets.GH_PAT }}|g"                       index.html
+          sed -i "s|%%GH_USERNAME%%|${{ secrets.GH_USERNAME }}|g"             index.html
+          sed -i "s|%%GH_REPO%%|${{ secrets.GH_REPO }}|g"                     index.html
+          sed -i "s|%%DH_USERNAME%%|${{ secrets.DOCKERHUB_USERNAME }}|g"      index.html
+          sed -i "s|%%DH_TOKEN%%|${{ secrets.DOCKERHUB_TOKEN }}|g"            index.html
+          sed -i "s|%%AZURE_RG%%|${{ secrets.AZURE_RESOURCE_GROUP }}|g"       index.html
+          sed -i "s|%%ACA_ENV%%|${{ secrets.ACA_ENVIRONMENT }}|g"             index.html
+          echo "Done injecting"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -51,6 +43,6 @@ jobs:
         with:
           path: '.'
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
