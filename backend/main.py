@@ -1,4 +1,3 @@
-# V2
 import os
 import json
 import re
@@ -26,6 +25,7 @@ DH_USERNAME  = os.environ.get("DH_USERNAME", "")
 DH_TOKEN     = os.environ.get("DH_TOKEN", "")
 AZURE_RG     = os.environ.get("AZURE_RG", "")
 ACA_ENV      = os.environ.get("ACA_ENV", "")
+ACR_NAME     = os.environ.get("ACR_NAME", "")
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
@@ -44,7 +44,72 @@ def health():
         "gemini":  bool(GEMINI_KEY),
         "docker":  bool(DH_USERNAME and DH_TOKEN),
         "azure":   bool(AZURE_RG and ACA_ENV),
+        "acr":     bool(ACR_NAME),
     }
+
+# ── Full status check ─────────────────────────────────────────────────────────
+@app.get("/status")
+async def status():
+    results = {}
+
+    # Check Gemini
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}",
+                json={"contents": [{"role": "user", "parts": [{"text": "say ok"}]}],
+                      "generationConfig": {"maxOutputTokens": 5}}
+            )
+            results["gemini"] = "✅ Connected" if res.is_success else f"❌ Error {res.status_code}"
+    except Exception as e:
+        results["gemini"] = f"❌ {str(e)}"
+
+    # Check Docker Hub credentials
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.get(
+                f"https://hub.docker.com/v2/users/{DH_USERNAME}/",
+            )
+            results["dockerhub"] = "✅ Connected" if res.status_code in [200, 401] else f"❌ Error {res.status_code}"
+            results["dockerhub_user"] = DH_USERNAME
+    except Exception as e:
+        results["dockerhub"] = f"❌ {str(e)}"
+
+    # Check Azure config
+    results["azure_rg"]  = f"✅ {AZURE_RG}"  if AZURE_RG  else "❌ Not set"
+    results["azure_env"] = f"✅ {ACA_ENV}"   if ACA_ENV   else "❌ Not set"
+
+    # Check Azure CLI
+    try:
+        check = subprocess.run(
+            ["az", "account", "show", "--query", "name", "-o", "tsv"],
+            capture_output=True, text=True, timeout=10
+        )
+        results["azure_cli"] = f"✅ Logged in: {check.stdout.strip()}" if check.returncode == 0 else "❌ Not logged in — AZURE_CREDENTIALS may be missing"
+    except Exception as e:
+        results["azure_cli"] = f"❌ {str(e)}"
+
+    # List existing container apps
+    try:
+        apps = subprocess.run(
+            ["az", "containerapp", "list",
+             "--resource-group", AZURE_RG,
+             "--query", "[].{name:name, url:properties.configuration.ingress.fqdn}",
+             "-o", "json"],
+            capture_output=True, text=True, timeout=15
+        )
+        if apps.returncode == 0:
+            app_list = json.loads(apps.stdout or "[]")
+            results["deployed_apps"] = app_list if app_list else "No apps deployed yet"
+        else:
+            results["deployed_apps"] = f"❌ {apps.stderr}"
+    except Exception as e:
+        results["deployed_apps"] = f"❌ {str(e)}"
+
+    all_ok = all("✅" in str(v) for v in [results["gemini"], results["dockerhub"], results["azure_rg"], results["azure_env"]])
+    results["overall"] = "✅ All systems ready!" if all_ok else "⚠️ Some issues found"
+
+    return results
 
 # ── Generate project via Gemini ───────────────────────────────────────────────
 @app.post("/generate")
@@ -102,55 +167,45 @@ Rules:
 
     return project
 
-# ── Deploy: build image → push Docker Hub → deploy to ACA ────────────────────
+# ── Deploy: build via ACR Task → push to ACR → deploy to ACA ─────────────────
 @app.post("/deploy")
 async def deploy(req: DeployRequest):
-    if not DH_USERNAME or not DH_TOKEN:
-        raise HTTPException(500, "Docker Hub credentials not configured")
     if not AZURE_RG or not ACA_ENV:
         raise HTTPException(500, "Azure credentials not configured")
+
+    ACR_NAME = os.environ.get("ACR_NAME", "")
+    if not ACR_NAME:
+        raise HTTPException(500, "ACR_NAME not configured")
 
     project      = req.project
     project_name = project.get("projectName", "my-app")
     files        = project.get("files", {})
     port         = project.get("port", 8080)
-    image_tag    = f"{DH_USERNAME}/{project_name}:latest"
+    image_tag    = f"{ACR_NAME}.azurecr.io/{project_name}:latest"
 
-    # Write files to temp directory and build Docker image
+    # Write files to temp directory
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Write all project files
         for filename, content in files.items():
             filepath = os.path.join(tmpdir, filename)
-            os.makedirs(os.path.dirname(filepath), exist_ok=True) if os.path.dirname(filepath) else None
+            dirpath = os.path.dirname(filepath)
+            if dirpath:
+                os.makedirs(dirpath, exist_ok=True)
             with open(filepath, "w") as f:
                 f.write(content)
 
-        # Step 1: Docker login
-        login_result = subprocess.run(
-            ["docker", "login", "-u", DH_USERNAME, "--password-stdin"],
-            input=DH_TOKEN, capture_output=True, text=True
-        )
-        if login_result.returncode != 0:
-            raise HTTPException(500, f"Docker login failed: {login_result.stderr}")
+        # Build image using ACR Task (runs in Azure cloud - no Docker daemon needed)
+        build_result = subprocess.run([
+            "az", "acr", "build",
+            "--registry", ACR_NAME,
+            "--image", f"{project_name}:latest",
+            "--file", os.path.join(tmpdir, "Dockerfile"),
+            tmpdir
+        ], capture_output=True, text=True, timeout=300)
 
-        # Step 2: Build Docker image
-        build_result = subprocess.run(
-            ["docker", "build", "-t", image_tag, tmpdir],
-            capture_output=True, text=True
-        )
         if build_result.returncode != 0:
-            raise HTTPException(500, f"Docker build failed: {build_result.stderr}")
+            raise HTTPException(500, f"ACR build failed: {build_result.stderr}")
 
-        # Step 3: Push to Docker Hub
-        push_result = subprocess.run(
-            ["docker", "push", image_tag],
-            capture_output=True, text=True
-        )
-        if push_result.returncode != 0:
-            raise HTTPException(500, f"Docker push failed: {push_result.stderr}")
-
-    # Step 4: Deploy to Azure Container Apps using az CLI
-    # Check if app exists
+    # Deploy to Azure Container Apps using az CLI
     check = subprocess.run(
         ["az", "containerapp", "show",
          "--name", project_name,
