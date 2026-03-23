@@ -233,7 +233,7 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
       <div class="welcome" id="welcome">
         <div class="wico">🚀</div>
         <h2>AutoDeploy <span>Agent</span></h2>
-        <p>Describe what you want to build. The agent writes the code, creates a Dockerfile, pushes to GitHub, triggers CI/CD — your app lands on Azure Container Apps automatically.</p>
+        <p>Describe what you want to build. The agent writes the code, builds a Docker image, and deploys directly to Azure Container Apps — no CI/CD pipeline needed.</p>
         <div class="flow">
           <div class="fs"><span class="fsi">💬</span><span class="fst">DESCRIBE</span></div><div class="farr">→</div>
           <div class="fs"><span class="fsi">🧠</span><span class="fst">AI CODES</span></div><div class="farr">→</div>
@@ -374,8 +374,37 @@ async function send() {
   addMsg('user', txt);
   inp.value=''; inp.style.height='auto';
   document.getElementById('sndBtn').disabled = true;
-  setStep(2);
 
+  // Handle status check command
+  const isStatus = txt.toLowerCase().match(/status|check|health|all good|working|test/);
+  if (isStatus) {
+    const tid = addTyping();
+    try {
+      const res = await fetch(`${BACKEND}/status`);
+      const data = await res.json();
+      removeTyping(tid);
+      addMsg('agent',
+`**${data.overall}**
+
+**Gemini AI:** ${data.gemini}
+**Docker Hub:** ${data.dockerhub} \`(${data.dockerhub_user})\`
+**Azure Resource Group:** ${data.azure_rg}
+**Azure ACA Environment:** ${data.azure_env}
+**Azure CLI:** ${data.azure_cli}
+**Deployed Apps:** ${Array.isArray(data.deployed_apps)
+  ? data.deployed_apps.length === 0
+    ? 'None yet'
+    : data.deployed_apps.map(a => \`\n- \${a.name} → https://\${a.url}\`).join('')
+  : data.deployed_apps}`);
+    } catch(err) {
+      removeTyping(tid);
+      addMsg('agent', \`⚠ Cannot reach backend: \${err.message}\`);
+    }
+    document.getElementById('sndBtn').disabled = false;
+    return;
+  }
+
+  setStep(2);
   const tid = addTyping();
   try {
     const res = await fetch(`${BACKEND}/generate`, {
@@ -394,7 +423,7 @@ async function send() {
     showProject(project);
   } catch(err) {
     removeTyping(tid);
-    addMsg('agent', `⚠ **Error:** ${err.message}\n\nMake sure your backend is running at: \`${BACKEND}\``);
+    addMsg('agent', \`⚠ **Error:** \${err.message}\n\nMake sure your backend is running at: \\`\${BACKEND}\\`\`);
     setStep(1);
   }
   document.getElementById('sndBtn').disabled = false;
@@ -428,8 +457,8 @@ function showProject(p) {
         <div class="acard">
           <div class="ac-ico">🚀</div>
           <div class="ac-body">
-            <div class="ac-title">Push ${Object.keys(p.files).length} files to GitHub → Docker Hub → Azure</div>
-            <div class="ac-sub">CI/CD will build image and deploy to Azure Container Apps automatically</div>
+            <div class="ac-title">Build → Docker Hub → Azure Container Apps</div>
+            <div class="ac-sub">Backend will build image directly and deploy to Azure — no GitHub push needed</div>
           </div>
           <button class="ac-btn" onclick="deployProject()">Deploy Now →</button>
         </div>
@@ -447,9 +476,9 @@ async function deployProject() {
 
   const pid = addProgress([
     { id:'p1', label:'Checking GitHub repo...' },
-    { id:'p2', label:'Pushing code files...' },
-    { id:'p3', label:'Pushing Dockerfile...' },
-    { id:'p4', label:'Pushing GitHub Actions workflow...' },
+    { id:'p2', label:'Building Docker image on backend...' },
+    { id:'p3', label:'Pushing image to Docker Hub...' },
+    { id:'p4', label:'Deploying to Azure Container Apps...' },
     { id:'p5', label:'CI/CD triggered → building Docker image...' },
   ]);
 
