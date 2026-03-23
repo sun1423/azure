@@ -392,14 +392,21 @@ function sendMsg() {
         } else if (typeof d.deployed_apps === 'string') {
           appsText = d.deployed_apps;
         }
-        var msg = (d.overall || 'Status check complete') + '\n\n' +
-          'Gemini AI: ' + d.gemini + '\n' +
-          'Docker Hub: ' + d.dockerhub + '\n' +
-          'Azure RG: ' + d.azure_rg + '\n' +
-          'Azure ENV: ' + d.azure_env + '\n' +
-          'Azure CLI: ' + d.azure_cli + '\n' +
-          'Deployed Apps: ' + appsText;
-        addMsg('agent', msg);
+        var msg = document.createElement('div');
+        msg.className = 'msg agent';
+        msg.innerHTML = '<div class="av">&#x1F916;</div><div class="mb"><div class="mm"><span class="mn">AutoDeploy Agent</span></div>' +
+          '<div class="bbl">' +
+          '<h3>' + (d.overall || 'Status Check') + '</h3>' +
+          '<div style="font-size:12px;line-height:2">' +
+          '<div>Gemini AI: ' + (d.gemini || 'unknown') + '</div>' +
+          '<div>Docker Hub: ' + (d.dockerhub || 'unknown') + '</div>' +
+          '<div>Azure RG: ' + (d.azure_rg || 'unknown') + '</div>' +
+          '<div>Azure ENV: ' + (d.azure_env || 'unknown') + '</div>' +
+          '<div>Azure CLI: ' + (d.azure_cli || 'unknown') + '</div>' +
+          '<div>Deployed Apps: ' + appsText + '</div>' +
+          '</div></div></div>';
+        document.getElementById('msgs').appendChild(msg);
+        document.getElementById('msgs').scrollTop = 9999;
       })
       .catch(function(e) {
         removeTyping(tid);
