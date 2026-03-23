@@ -71,6 +71,7 @@ jobs:
               "AZURE_RG=${{ secrets.AZURE_RESOURCE_GROUP }}" \
               "ACA_ENV=${{ secrets.ACA_ENVIRONMENT }}" \
               "ACR_NAME=${{ secrets.ACR_NAME }}" \
+              "AZURE_CREDENTIALS=${{ secrets.AZURE_CREDENTIALS }}" \
             2>&1
           echo "Exit code: $?"
 
