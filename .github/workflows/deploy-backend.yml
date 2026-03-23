@@ -83,7 +83,10 @@ jobs:
               "AZURE_RG=${{ secrets.AZURE_RESOURCE_GROUP }}" \
               "ACA_ENV=${{ secrets.ACA_ENVIRONMENT }}" \
               "ACR_NAME=${{ secrets.ACR_NAME }}" \
-              "AZURE_CREDENTIALS=${{ secrets.AZURE_CREDENTIALS }}" \
+              "AZURE_CLIENT_ID=${{ secrets.AZURESUN_AZURE_CLIENT_ID }}" \
+              "AZURE_CLIENT_SECRET=${{ secrets.AZURESUN_AZURE_CLIENT_SECRET }}" \
+              "AZURE_TENANT_ID=${{ secrets.AZURESUN_AZURE_TENANT_ID }}" \
+              "AZURE_SUB_ID=${{ secrets.AZURESUN_AZURE_SUBSCRIPTION_ID }}" \
             2>&1
           echo "Exit code: $?"
 
