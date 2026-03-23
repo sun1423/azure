@@ -20,12 +20,61 @@ app.add_middleware(
 )
 
 # Secrets from Azure Container Apps environment variables
-GEMINI_KEY   = os.environ.get("GEMINI_KEY", "")
-DH_USERNAME  = os.environ.get("DH_USERNAME", "")
-DH_TOKEN     = os.environ.get("DH_TOKEN", "")
-AZURE_RG     = os.environ.get("AZURE_RG", "")
-ACA_ENV      = os.environ.get("ACA_ENV", "")
-ACR_NAME     = os.environ.get("ACR_NAME", "")
+GEMINI_KEY         = os.environ.get("GEMINI_KEY", "")
+DH_USERNAME        = os.environ.get("DH_USERNAME", "")
+DH_TOKEN           = os.environ.get("DH_TOKEN", "")
+AZURE_RG           = os.environ.get("AZURE_RG", "")
+ACA_ENV            = os.environ.get("ACA_ENV", "")
+ACR_NAME           = os.environ.get("ACR_NAME", "")
+AZURE_CREDENTIALS = os.environ.get("AZURE_CREDENTIALS", "")
+
+# Login to Azure on startup
+def azure_login():
+    if not AZURE_CREDENTIALS:
+        print("WARNING: AZURE_CREDENTIALS not set")
+        return
+    try:
+        creds = json.loads(AZURE_CREDENTIALS)
+        r = subprocess.run([
+            "az", "login", "--service-principal",
+            "--username", creds.get("clientId", ""),
+            "--password", creds.get("clientSecret", ""),
+            "--tenant",   creds.get("tenantId", "")
+        ], capture_output=True, text=True)
+        if r.returncode == 0:
+            subprocess.run(["az", "account", "set",
+                "--subscription", creds.get("subscriptionId", "")],
+                capture_output=True, text=True)
+            print("Azure login successful")
+        else:
+            print(f"Azure login failed: {r.stderr}")
+    except Exception as e:
+        print(f"Azure login error: {e}")
+
+azure_login()
+
+AZURE_CLIENT_ID    = os.environ.get("AZURE_CLIENT_ID", "")
+AZURE_CLIENT_SECRET= os.environ.get("AZURE_CLIENT_SECRET", "")
+AZURE_TENANT_ID    = os.environ.get("AZURE_TENANT_ID", "")
+
+# Auto-login to Azure on startup using service principal
+def az_login():
+    if AZURE_CLIENT_ID and AZURE_CLIENT_SECRET and AZURE_TENANT_ID:
+        result = subprocess.run([
+            "az", "login",
+            "--service-principal",
+            "--username", AZURE_CLIENT_ID,
+            "--password", AZURE_CLIENT_SECRET,
+            "--tenant", AZURE_TENANT_ID
+        ], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("Azure login successful")
+        else:
+            print("Azure login failed:", result.stderr)
+    else:
+        print("Azure credentials not set - skipping login")
+
+az_login()
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
