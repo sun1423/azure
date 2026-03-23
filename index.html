@@ -338,19 +338,38 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
 
 <script>
 // ── Config ────────────────────────────────────────────────────────────────────
-const INJECTED_GEMINI = '%%GEMINI_KEY%%';
-const HAS_INJECTED    = !INJECTED_GEMINI.startsWith('%%');
-if (HAS_INJECTED) localStorage.setItem('ad_gemini', INJECTED_GEMINI);
+// All secrets injected by GitHub Actions at build time
+const INJECTED = {
+  gemini:  '%%GEMINI_KEY%%',
+  ghToken: '%%GH_PAT%%',
+  ghUser:  '%%GH_USERNAME%%',
+  ghRepo:  '%%GH_REPO%%',
+  dhUser:  '%%DH_USERNAME%%',
+  dhToken: '%%DH_TOKEN%%',
+  azRg:    '%%AZURE_RG%%',
+  acaEnv:  '%%ACA_ENV%%',
+};
+
+// Use injected value if it was replaced (doesn't start with %%)
+// Otherwise fall back to localStorage (manual config)
+function getVal(injected, lsKey) {
+  return (!injected.startsWith('%%')) ? injected : (localStorage.getItem(lsKey) || '');
+}
+
+// Save injected values to localStorage so they persist
+Object.entries(INJECTED).forEach(([k, v]) => {
+  if (!v.startsWith('%%')) localStorage.setItem('ad_' + k, v);
+});
 
 let cfg = {
-  gemini:  HAS_INJECTED ? INJECTED_GEMINI : (localStorage.getItem('ad_gemini')  || ''),
-  ghToken: localStorage.getItem('ad_ghtoken') || '',
-  ghUser:  localStorage.getItem('ad_ghuser')  || '',
-  ghRepo:  localStorage.getItem('ad_ghrepo')  || '',
-  dhUser:  localStorage.getItem('ad_dhuser')  || '',
-  dhToken: localStorage.getItem('ad_dhtoken') || '',
-  azRg:    localStorage.getItem('ad_azrg')    || '',
-  acaEnv:  localStorage.getItem('ad_acaenv')  || '',
+  gemini:  getVal(INJECTED.gemini,  'ad_gemini'),
+  ghToken: getVal(INJECTED.ghToken, 'ad_ghtoken'),
+  ghUser:  getVal(INJECTED.ghUser,  'ad_ghuser'),
+  ghRepo:  getVal(INJECTED.ghRepo,  'ad_ghrepo'),
+  dhUser:  getVal(INJECTED.dhUser,  'ad_dhuser'),
+  dhToken: getVal(INJECTED.dhToken, 'ad_dhtoken'),
+  azRg:    getVal(INJECTED.azRg,    'ad_azrg'),
+  acaEnv:  getVal(INJECTED.acaEnv,  'ad_acaenv'),
 };
 
 let history = JSON.parse(localStorage.getItem('ad_history') || '[]');
@@ -362,7 +381,9 @@ function init() {
   populateModal();
   renderHistory();
   setStep(1);
-  if (!cfg.gemini || !cfg.ghToken) setTimeout(openModal, 700);
+  // Only show config modal if secrets were NOT injected AND not in localStorage
+  const allSet = cfg.gemini && cfg.ghToken && cfg.ghUser && cfg.ghRepo && cfg.dhUser && cfg.dhToken;
+  if (!allSet) setTimeout(openModal, 700);
 }
 
 function updateStatus() {
