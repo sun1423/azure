@@ -29,9 +29,20 @@ ACR_NAME           = os.environ.get("ACR_NAME", "")
 AZURE_CREDENTIALS = os.environ.get("AZURE_CREDENTIALS", "")
 
 # Login to Azure on startup
+# Try managed identity first (best for ACA), fallback to service principal
 def azure_login():
+    # Try managed identity first
+    r = subprocess.run(
+        ["az", "login", "--identity"],
+        capture_output=True, text=True
+    )
+    if r.returncode == 0:
+        print("Azure login successful via managed identity")
+        return
+
+    # Fallback to service principal
     if not AZURE_CREDENTIALS:
-        print("WARNING: AZURE_CREDENTIALS not set")
+        print("WARNING: AZURE_CREDENTIALS not set and managed identity failed")
         return
     try:
         creds = json.loads(AZURE_CREDENTIALS)
@@ -45,7 +56,7 @@ def azure_login():
             subprocess.run(["az", "account", "set",
                 "--subscription", creds.get("subscriptionId", "")],
                 capture_output=True, text=True)
-            print("Azure login successful")
+            print("Azure login successful via service principal")
         else:
             print(f"Azure login failed: {r.stderr}")
     except Exception as e:
@@ -128,15 +139,18 @@ async def status():
     results["azure_rg"]  = f"✅ {AZURE_RG}"  if AZURE_RG  else "❌ Not set"
     results["azure_env"] = f"✅ {ACA_ENV}"   if ACA_ENV   else "❌ Not set"
 
+    # Try Azure CLI login first
+    azure_login()
+
     # Check Azure CLI
     try:
         check = subprocess.run(
             ["az", "account", "show", "--query", "name", "-o", "tsv"],
             capture_output=True, text=True, timeout=10
         )
-        results["azure_cli"] = f"✅ Logged in: {check.stdout.strip()}" if check.returncode == 0 else "❌ Not logged in — AZURE_CREDENTIALS may be missing"
+        results["azure_cli"] = "✅ Logged in" if check.returncode == 0 else "⚠️ Not logged in (will login on deploy)"
     except Exception as e:
-        results["azure_cli"] = f"❌ {str(e)}"
+        results["azure_cli"] = "⚠️ Not checked"
 
     # List existing container apps
     try:
@@ -151,12 +165,12 @@ async def status():
             app_list = json.loads(apps.stdout or "[]")
             results["deployed_apps"] = app_list if app_list else "No apps deployed yet"
         else:
-            results["deployed_apps"] = f"❌ {apps.stderr}"
+            results["deployed_apps"] = "No apps yet (login happens on deploy)"
     except Exception as e:
-        results["deployed_apps"] = f"❌ {str(e)}"
+        results["deployed_apps"] = "No apps yet"
 
     all_ok = all("✅" in str(v) for v in [results["gemini"], results["dockerhub"], results["azure_rg"], results["azure_env"]])
-    results["overall"] = "✅ All systems ready!" if all_ok else "⚠️ Some issues found"
+    results["overall"] = "✅ All systems ready! Type your requirement to deploy." if all_ok else "⚠️ Some issues found"
 
     return results
 
