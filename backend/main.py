@@ -158,35 +158,39 @@ async def deploy(req: DeployRequest):
         capture_output=True, text=True
     )
 
-    if check.returncode != 0 or not check.stdout.strip():
-        # Create new container app
-        create = subprocess.run([
-            "az", "containerapp", "create",
+    if check.returncode == 0 and check.stdout.strip():
+        # Delete old container app first
+        print(f"Deleting old container app: {project_name}")
+        delete = subprocess.run([
+            "az", "containerapp", "delete",
             "--name", project_name,
             "--resource-group", AZURE_RG,
-            "--environment", ACA_ENV,
-            "--image", image_tag,
-            "--target-port", str(port),
-            "--ingress", "external",
-            "--min-replicas", "0",
-            "--max-replicas", "3",
-            "--cpu", "0.5",
-            "--memory", "1.0Gi"
+            "--yes"
         ], capture_output=True, text=True)
+        if delete.returncode != 0:
+            raise HTTPException(500, f"Failed to delete old container: {delete.stderr}")
+        # Wait for deletion to complete
+        import time
+        time.sleep(10)
 
-        if create.returncode != 0:
-            raise HTTPException(500, f"Azure deploy failed: {create.stderr}")
-    else:
-        # Update existing container app
-        update = subprocess.run([
-            "az", "containerapp", "update",
-            "--name", project_name,
-            "--resource-group", AZURE_RG,
-            "--image", image_tag
-        ], capture_output=True, text=True)
+    # Create fresh container app
+    print(f"Creating new container app: {project_name}")
+    create = subprocess.run([
+        "az", "containerapp", "create",
+        "--name", project_name,
+        "--resource-group", AZURE_RG,
+        "--environment", ACA_ENV,
+        "--image", image_tag,
+        "--target-port", str(port),
+        "--ingress", "external",
+        "--min-replicas", "0",
+        "--max-replicas", "3",
+        "--cpu", "0.5",
+        "--memory", "1.0Gi"
+    ], capture_output=True, text=True)
 
-        if update.returncode != 0:
-            raise HTTPException(500, f"Azure update failed: {update.stderr}")
+    if create.returncode != 0:
+        raise HTTPException(500, f"Azure deploy failed: {create.stderr}")
 
     # Get app URL
     url_result = subprocess.run([
