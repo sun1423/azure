@@ -20,7 +20,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push backend image
         uses: docker/build-push-action@v5
         with:
           context: ./backend
@@ -40,7 +40,7 @@ jobs:
           az provider register --namespace Microsoft.App --wait
           az provider register --namespace Microsoft.OperationalInsights --wait
 
-      - name: Create or Update Container App
+      - name: Create or Update Backend Container App
         run: |
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}"
           EXISTS=$(az containerapp show \
@@ -49,7 +49,7 @@ jobs:
             --query "name" -o tsv 2>/dev/null || echo "")
 
           if [ -z "$EXISTS" ]; then
-            echo "Creating backend Container App..."
+            echo "Creating backend..."
             az containerapp create \
               --name autodeploy-backend \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
@@ -63,27 +63,35 @@ jobs:
               --memory 1.0Gi \
               --secrets \
                 gemini-key="${{ secrets.GEMINI_KEY }}" \
-                gh-pat="${{ secrets.GH_PAT }}" \
-                gh-username="${{ secrets.GH_USERNAME }}" \
-                gh-repo="${{ secrets.GH_REPO }}" \
                 dh-username="${{ secrets.DOCKERHUB_USERNAME }}" \
+                dh-token="${{ secrets.DOCKERHUB_TOKEN }}" \
                 azure-rg="${{ secrets.AZURE_RESOURCE_GROUP }}" \
                 aca-env="${{ secrets.ACA_ENVIRONMENT }}" \
               --env-vars \
                 GEMINI_KEY=secretref:gemini-key \
-                GH_PAT=secretref:gh-pat \
-                GH_USERNAME=secretref:gh-username \
-                GH_REPO=secretref:gh-repo \
                 DH_USERNAME=secretref:dh-username \
+                DH_TOKEN=secretref:dh-token \
                 AZURE_RG=secretref:azure-rg \
                 ACA_ENV=secretref:aca-env
           else
-            echo "Updating backend Container App..."
+            echo "Updating backend..."
             az containerapp update \
               --name autodeploy-backend \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
               --image $IMAGE
           fi
+
+      - name: Update secrets on existing app
+        run: |
+          az containerapp secret set \
+            --name autodeploy-backend \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --secrets \
+              gemini-key="${{ secrets.GEMINI_KEY }}" \
+              dh-username="${{ secrets.DOCKERHUB_USERNAME }}" \
+              dh-token="${{ secrets.DOCKERHUB_TOKEN }}" \
+              azure-rg="${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              aca-env="${{ secrets.ACA_ENVIRONMENT }}"
 
       - name: Print backend URL
         run: |
@@ -94,4 +102,3 @@ jobs:
           echo "======================================"
           echo "✅ Backend URL: https://$URL"
           echo "======================================"
-          echo "Paste this URL into your GitHub Pages site under ⚙ Backend URL"
