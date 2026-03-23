@@ -35,63 +35,42 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Install containerapp extension
-        run: |
-          az extension add --name containerapp --upgrade -y
-          az provider register --namespace Microsoft.App --wait
-          az provider register --namespace Microsoft.OperationalInsights --wait
+        run: az extension add --name containerapp --upgrade -y
 
-      - name: Create or Update Backend Container App
+      - name: Delete old backend if exists
         run: |
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}"
           EXISTS=$(az containerapp show \
             --name autodeploy-backend \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --query "name" -o tsv 2>/dev/null || echo "")
-
-          if [ -z "$EXISTS" ]; then
-            echo "Creating backend..."
-            az containerapp create \
+          if [ -n "$EXISTS" ]; then
+            echo "Deleting old backend..."
+            az containerapp delete \
               --name autodeploy-backend \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --environment ${{ secrets.ACA_ENVIRONMENT }} \
-              --image $IMAGE \
-              --target-port 8080 \
-              --ingress external \
-              --min-replicas 1 \
-              --max-replicas 3 \
-              --cpu 0.5 \
-              --memory 1.0Gi \
-              --secrets \
-                gemini-key="${{ secrets.GEMINI_KEY }}" \
-                dh-username="${{ secrets.DOCKERHUB_USERNAME }}" \
-                dh-token="${{ secrets.DOCKERHUB_TOKEN }}" \
-                azure-rg="${{ secrets.AZURE_RESOURCE_GROUP }}" \
-                aca-env="${{ secrets.ACA_ENVIRONMENT }}" \
-              --env-vars \
-                GEMINI_KEY=secretref:gemini-key \
-                DH_USERNAME=secretref:dh-username \
-                DH_TOKEN=secretref:dh-token \
-                AZURE_RG=secretref:azure-rg \
-                ACA_ENV=secretref:aca-env
-          else
-            echo "Updating backend..."
-            az containerapp update \
-              --name autodeploy-backend \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --image $IMAGE
+              --yes
+            sleep 15
           fi
 
-      - name: Update secrets on existing app
+      - name: Create fresh backend
         run: |
-          az containerapp secret set \
+          az containerapp create \
             --name autodeploy-backend \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --secrets \
-              gemini-key="${{ secrets.GEMINI_KEY }}" \
-              dh-username="${{ secrets.DOCKERHUB_USERNAME }}" \
-              dh-token="${{ secrets.DOCKERHUB_TOKEN }}" \
-              azure-rg="${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              aca-env="${{ secrets.ACA_ENVIRONMENT }}"
+            --environment ${{ secrets.ACA_ENVIRONMENT }} \
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }} \
+            --target-port 8080 \
+            --ingress external \
+            --min-replicas 1 \
+            --max-replicas 3 \
+            --cpu 0.5 \
+            --memory 1.0Gi \
+            --env-vars \
+              GEMINI_KEY="${{ secrets.GEMINI_KEY }}" \
+              DH_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}" \
+              DH_TOKEN="${{ secrets.DOCKERHUB_TOKEN }}" \
+              AZURE_RG="${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              ACA_ENV="${{ secrets.ACA_ENVIRONMENT }}"
 
       - name: Print backend URL
         run: |
