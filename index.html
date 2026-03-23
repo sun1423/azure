@@ -485,14 +485,50 @@ Rules:
 - requirements.txt: all pip packages needed
 - GitHub Actions workflow (.github/workflows/docker-build.yml):
   * trigger: push to main branch only
-  * steps:
-    1. actions/checkout@v4
-    2. docker/login-action with DOCKERHUB_USERNAME + DOCKERHUB_TOKEN secrets
-    3. docker/build-push-action to build and push DHUSER/projectName:latest and :${{ github.sha }}
-    4. azure/login@v1 with AZURE_CREDENTIALS secret
-    5. azure/container-apps-update action OR az cli: az containerapp update --name projectName --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --image DHUSER/projectName:latest --environment ${{ secrets.ACA_ENVIRONMENT }} (create with az containerapp create if first deploy, use if-no-containerapp-create pattern)
-  * Use az containerapp create on first deploy, az containerapp update on subsequent
-  * The containerapp name should be the projectName
+  * Use EXACTLY this workflow structure — do not deviate:
+
+name: Build and Deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            DHUSER/projectName:latest
+            DHUSER/projectName:${{ github.sha }}
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Container Apps
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          containerAppName: projectName
+          resourceGroup: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          imageToDeploy: DHUSER/projectName:${{ github.sha }}
+          targetPort: 8080
+          ingress: external
+
+  * Replace projectName and DHUSER with actual values in the workflow
+  * Use azure/container-apps-deploy-action@v1 — NOT az cli commands
+  * This action handles both create and update automatically
 - projectName: lowercase letters, numbers, hyphens only, max 32 chars
 - Replace DHUSER with actual docker hub username in dockerRunCommand and workflow`;
 
