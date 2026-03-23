@@ -472,7 +472,7 @@ Respond with ONLY valid JSON — no markdown fences, no explanation outside the 
     "main.py": "complete python code",
     "requirements.txt": "one dependency per line",
     "Dockerfile": "complete dockerfile",
-    ".github/workflows/docker-build.yml": "complete github actions workflow"
+    ".github/workflows/docker-build.yml": "complete github actions workflow (will be renamed to projectName-docker-build.yml in root)"
   },
   "port": 8080,
   "dockerRunCommand": "docker run -p 8080:8080 DHUSER/PROJNAME:latest",
@@ -485,17 +485,22 @@ Rules:
 - requirements.txt: all pip packages needed
 - GitHub Actions workflow (.github/workflows/docker-build.yml):
   * trigger: push to main branch only
-  * Use EXACTLY this workflow structure — do not deviate:
+  * Use EXACTLY this workflow — do not change the structure at all:
 
-name: Build and Deploy
+name: Build and Deploy to Azure Container Apps
 on:
   push:
     branches: [main]
+env:
+  APP_NAME: projectName
+  RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  ACA_ENVIRONMENT: ${{ secrets.ACA_ENVIRONMENT }}
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -503,32 +508,45 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
-            DHUSER/projectName:latest
-            DHUSER/projectName:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/projectName:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/projectName:${{ github.sha }}
 
-      - name: Azure Login
-        uses: azure/login@v1
+      - name: Login to Azure
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to Azure Container Apps
-        uses: azure/container-apps-deploy-action@v1
-        with:
-          containerAppName: projectName
-          resourceGroup: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          imageToDeploy: DHUSER/projectName:${{ github.sha }}
-          targetPort: 8080
-          ingress: external
+      - name: Install containerapp extension
+        run: |
+          az extension add --name containerapp --upgrade -y
+          az provider register --namespace Microsoft.App --wait
+          az provider register --namespace Microsoft.OperationalInsights --wait
 
-  * Replace projectName and DHUSER with actual values in the workflow
-  * Use azure/container-apps-deploy-action@v1 — NOT az cli commands
-  * This action handles both create and update automatically
+      - name: Create or Update Container App
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/projectName:${{ github.sha }}"
+          EXISTS=$(az containerapp show --name ${{ env.APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query "name" -o tsv 2>/dev/null || echo "")
+          if [ -z "$EXISTS" ]; then
+            az containerapp create --name ${{ env.APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --environment ${{ env.ACA_ENVIRONMENT }} --image $IMAGE --target-port 8080 --ingress external --min-replicas 0 --max-replicas 3 --cpu 0.5 --memory 1.0Gi
+          else
+            az containerapp update --name ${{ env.APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --image $IMAGE
+          fi
+
+      - name: Print App URL
+        run: |
+          URL=$(az containerapp show --name ${{ env.APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "App live at: https://$URL"
+
+  * Replace ALL instances of projectName with actual project name
+  * NEVER use azure/container-apps-deploy-action — it is broken and will fail
+  * NEVER use || operator for az commands — use the if/else EXISTS check pattern above
+  * Always install the containerapp extension before using az containerapp commands
 - projectName: lowercase letters, numbers, hyphens only, max 32 chars
 - Replace DHUSER with actual docker hub username in dockerRunCommand and workflow`;
 
@@ -619,7 +637,7 @@ async function deployProject() {
   const steps = [
     { id:'p1', label:'Checking / creating GitHub repo...' },
     { id:'p2', label:\`Pushing files to \${cfg.ghUser}/\${cfg.ghRepo}/\${currentProject.projectName}/\` },
-    { id:'p3', label:'Uploading GitHub Actions workflow (Docker Hub + Azure Container Apps)...' },
+    { id:'p3', label:`Pushing workflow to .github/workflows/${currentProject.projectName}-docker-build.yml` },
     { id:'p4', label:'CI/CD triggered → will build image, push to Docker Hub, deploy to ACA' },
   ];
   const pid = addProgress(steps);
@@ -727,7 +745,12 @@ async function ensureRepo() {
 }
 
 async function pushFile(filename, content, projectName) {
-  const path    = `/repos/${cfg.ghUser}/${cfg.ghRepo}/contents/${projectName}/${filename}`;
+  // Workflows go to ROOT .github/workflows/ with project name prefix
+  // All other files go inside the project folder
+  const repoPath = filename.startsWith('.github/')
+    ? filename.replace('.github/workflows/', `.github/workflows/${projectName}-`)
+    : `${projectName}/${filename}`;
+  const path    = `/repos/${cfg.ghUser}/${cfg.ghRepo}/contents/${repoPath}`;
   const encoded = btoa(unescape(encodeURIComponent(content)));
 
   // Get existing SHA if file exists
