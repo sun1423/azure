@@ -246,6 +246,26 @@ async def deploy(req: DeployRequest):
     port         = project.get("port", 8080)
     image_tag    = f"{ACR_NAME}.azurecr.io/{project_name}:latest"
 
+    # Login to Azure before doing anything
+    if not AZURE_CREDENTIALS:
+        raise HTTPException(500, "AZURE_CREDENTIALS not set in container environment")
+    try:
+        creds = json.loads(AZURE_CREDENTIALS)
+        login = subprocess.run([
+            "az", "login", "--service-principal",
+            "--username", creds.get("clientId", ""),
+            "--password", creds.get("clientSecret", ""),
+            "--tenant",   creds.get("tenantId", "")
+        ], capture_output=True, text=True)
+        if login.returncode != 0:
+            raise HTTPException(500, f"Azure login failed: {login.stderr}")
+        subprocess.run([
+            "az", "account", "set",
+            "--subscription", creds.get("subscriptionId", "")
+        ], capture_output=True, text=True)
+    except json.JSONDecodeError:
+        raise HTTPException(500, "AZURE_CREDENTIALS is not valid JSON")
+
     # Write files to temp directory
     with tempfile.TemporaryDirectory() as tmpdir:
         for filename, content in files.items():
