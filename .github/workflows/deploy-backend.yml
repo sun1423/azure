@@ -70,7 +70,8 @@ jobs:
               DH_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}" \
               DH_TOKEN="${{ secrets.DOCKERHUB_TOKEN }}" \
               AZURE_RG="${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              ACA_ENV="${{ secrets.ACA_ENVIRONMENT }}"
+              ACA_ENV="${{ secrets.ACA_ENVIRONMENT }}" \
+              ACR_NAME="${{ secrets.ACR_NAME }}"
 
       - name: Print backend URL
         run: |
