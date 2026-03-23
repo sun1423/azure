@@ -475,19 +475,15 @@ async function deployProject() {
     await sleep(1000);
     updateProg(pid,'p5','done');
 
-    setStep(5);
+    setStep(6);
 
     addMsg('agent',
-`✅ **Successfully pushed to GitHub!**
+`✅ **Successfully deployed to Azure!**
 
-**📁 Repo:** [${result.repoUrl}](${result.repoUrl})
-**⚙️ CI/CD running:** [Watch it →](${result.actionsUrl})
-**☁️ Azure:** App will be live on Azure Container Apps in ~3 min
+**🐳 Docker image:** \`${result.image}\`
+**☁️ App URL:** [${result.appUrl}](${result.appUrl})
 
-**Files pushed:**
-${result.pushed.map(f => `- \`${f}\``).join('\n')}
-
-**Once deployed, check Azure Portal for your app URL** 🎉`);
+Your app is live on Azure Container Apps! 🎉`);
 
     setStep(6);
     addToHistory(currentProject.projectName, currentProject.description);
