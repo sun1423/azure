@@ -375,30 +375,39 @@ async function send() {
   inp.value=''; inp.style.height='auto';
   document.getElementById('sndBtn').disabled = true;
 
-  // Handle status check command
-  const isStatus = txt.toLowerCase().match(/status|check|health|all good|working|test/);
-  if (isStatus) {
+  // Status check
+  if (/status|check|health|all good|working|test/i.test(txt)) {
     const tid = addTyping();
     try {
-      const res = await fetch(`${BACKEND}/status`);
+      const res = await fetch(BACKEND + '/status');
       const data = await res.json();
       removeTyping(tid);
+      let appsText = 'None yet';
+      if (Array.isArray(data.deployed_apps) && data.deployed_apps.length > 0) {
+        appsText = data.deployed_apps.map(a => '- ' + a.name + ' → https://' + a.url).join('
+');
+      } else if (typeof data.deployed_apps === 'string') {
+        appsText = data.deployed_apps;
+      }
       addMsg('agent',
-`**${data.overall}**
+        '**' + data.overall + '**
 
-**Gemini AI:** ${data.gemini}
-**Docker Hub:** ${data.dockerhub} \`(${data.dockerhub_user})\`
-**Azure Resource Group:** ${data.azure_rg}
-**Azure ACA Environment:** ${data.azure_env}
-**Azure CLI:** ${data.azure_cli}
-**Deployed Apps:** ${Array.isArray(data.deployed_apps)
-  ? data.deployed_apps.length === 0
-    ? 'None yet'
-    : data.deployed_apps.map(a => \`\n- \${a.name} → https://\${a.url}\`).join('')
-  : data.deployed_apps}`);
+' +
+        '**Gemini AI:** ' + data.gemini + '
+' +
+        '**Docker Hub:** ' + data.dockerhub + '
+' +
+        '**Azure RG:** ' + data.azure_rg + '
+' +
+        '**Azure ENV:** ' + data.azure_env + '
+' +
+        '**Azure CLI:** ' + data.azure_cli + '
+' +
+        '**Deployed Apps:** ' + appsText
+      );
     } catch(err) {
       removeTyping(tid);
-      addMsg('agent', \`⚠ Cannot reach backend: \${err.message}\`);
+      addMsg('agent', '⚠ Cannot reach backend: ' + err.message);
     }
     document.getElementById('sndBtn').disabled = false;
     return;
@@ -407,14 +416,14 @@ async function send() {
   setStep(2);
   const tid = addTyping();
   try {
-    const res = await fetch(`${BACKEND}/generate`, {
+    const res = await fetch(BACKEND + '/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requirement: txt })
     });
     if (!res.ok) {
       const e = await res.json();
-      throw new Error(e.detail || `Backend error ${res.status}`);
+      throw new Error(e.detail || 'Backend error ' + res.status);
     }
     const project = await res.json();
     removeTyping(tid);
@@ -423,162 +432,10 @@ async function send() {
     showProject(project);
   } catch(err) {
     removeTyping(tid);
-    addMsg('agent', \`⚠ **Error:** \${err.message}\n\nMake sure your backend is running at: \\`\${BACKEND}\\`\`);
+    addMsg('agent', '⚠ Error: ' + err.message + '
+
+Make sure your backend is running at: ' + BACKEND);
     setStep(1);
   }
   document.getElementById('sndBtn').disabled = false;
 }
-
-// ── Show project ──────────────────────────────────────────────────────────────
-function showProject(p) {
-  const msgs = document.getElementById('msgs');
-  const div  = document.createElement('div');
-  div.className = 'msg agent';
-
-  const langMap = {'.py':'python','.txt':'text','.yml':'yaml','.yaml':'yaml','Dockerfile':'dockerfile'};
-  let filesHtml = '';
-  for (const [fname, content] of Object.entries(p.files)) {
-    const ext = fname.includes('.') ? '.'+fname.split('.').pop() : fname;
-    const lang = langMap[ext] || langMap[fname] || 'text';
-    filesHtml += `<div style="margin:10px 0">
-      <div style="font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">📄 ${fname}</div>
-      <pre><div class="pre-hdr"><span class="pre-lang">${lang}</span><button class="cpbtn" onclick="doCopy(this)">copy</button></div><code>${esc(content)}</code></pre>
-    </div>`;
-  }
-
-  div.innerHTML = `
-    <div class="av">🤖</div>
-    <div class="mb">
-      <div class="mm"><span class="mn">AutoDeploy Agent</span><span>${now()}</span></div>
-      <div class="bbl">
-        <h3>✅ Generated: ${p.projectName}</h3>
-        <p style="font-size:12px;color:var(--text2);margin-bottom:10px">${p.description}</p>
-        ${filesHtml}
-        <div class="acard">
-          <div class="ac-ico">🚀</div>
-          <div class="ac-body">
-            <div class="ac-title">Build → Docker Hub → Azure Container Apps</div>
-            <div class="ac-sub">Backend will build image directly and deploy to Azure — no GitHub push needed</div>
-          </div>
-          <button class="ac-btn" onclick="deployProject()">Deploy Now →</button>
-        </div>
-      </div>
-    </div>`;
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-}
-
-// ── Deploy ────────────────────────────────────────────────────────────────────
-async function deployProject() {
-  if (!currentProject) return;
-  document.querySelectorAll('.ac-btn').forEach(b => b.disabled = true);
-  setStep(4);
-
-  const pid = addProgress([
-    { id:'p1', label:'Checking GitHub repo...' },
-    { id:'p2', label:'Building Docker image on backend...' },
-    { id:'p3', label:'Pushing image to Docker Hub...' },
-    { id:'p4', label:'Deploying to Azure Container Apps...' },
-    { id:'p5', label:'CI/CD triggered → building Docker image...' },
-  ]);
-
-  try {
-    updateProg(pid,'p1','spin');
-    const res = await fetch(`${BACKEND}/deploy`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: currentProject })
-    });
-
-    if (!res.ok) {
-      const e = await res.json();
-      throw new Error(e.detail || `Deploy failed ${res.status}`);
-    }
-
-    const result = await res.json();
-    updateProg(pid,'p1','done');
-    updateProg(pid,'p2','done');
-    updateProg(pid,'p3','done');
-    updateProg(pid,'p4','done');
-    updateProg(pid,'p5','spin');
-    await sleep(1000);
-    updateProg(pid,'p5','done');
-
-    setStep(6);
-
-    addMsg('agent',
-`✅ **Successfully deployed to Azure!**
-
-**🐳 Docker image:** \`${result.image}\`
-**☁️ App URL:** [${result.appUrl}](${result.appUrl})
-
-Your app is live on Azure Container Apps! 🎉`);
-
-    setStep(6);
-    addToHistory(currentProject.projectName, currentProject.description);
-    currentProject = null;
-
-  } catch(err) {
-    updateProg(pid,'p2','fail');
-    addMsg('agent', `⚠ **Deploy failed:** ${err.message}`);
-    setStep(1);
-  }
-}
-
-// ── Progress ──────────────────────────────────────────────────────────────────
-function addProgress(steps) {
-  const msgs = document.getElementById('msgs');
-  const id   = 'prog-'+Date.now();
-  const div  = document.createElement('div');
-  div.className='msg agent'; div.id=id;
-  div.innerHTML=`<div class="av">🤖</div><div class="mb"><div class="mm"><span class="mn">AutoDeploy Agent</span><span>${now()}</span></div><div class="bbl"><div class="prog-box"><div class="prog-title">🚀 Deploying...</div>${steps.map(s=>`<div class="ps-item"><div class="ps-dot wait" id="${id}-${s.id}">·</div><span>${s.label}</span></div>`).join('')}</div></div></div>`;
-  msgs.appendChild(div); msgs.scrollTop=msgs.scrollHeight; return id;
-}
-function updateProg(pid,sid,state) {
-  const dot=document.getElementById(`${pid}-${sid}`);
-  if(!dot)return;
-  dot.className=`ps-dot ${state}`;
-  dot.textContent=state==='done'?'✓':state==='fail'?'✗':'●';
-  document.getElementById('msgs').scrollTop=9999;
-}
-
-// ── Utils ─────────────────────────────────────────────────────────────────────
-function addMsg(role,text) {
-  const msgs=document.getElementById('msgs');
-  const div=document.createElement('div');
-  div.className=`msg ${role}`;
-  div.innerHTML=`<div class="av">${role==='user'?'👤':'🤖'}</div><div class="mb"><div class="mm"><span class="mn">${role==='user'?'You':'AutoDeploy Agent'}</span><span>${now()}</span></div><div class="bbl">${fmt(text)}</div></div>`;
-  msgs.appendChild(div); msgs.scrollTop=msgs.scrollHeight;
-}
-function addTyping() {
-  const msgs=document.getElementById('msgs');
-  const id='ty-'+Date.now();
-  const div=document.createElement('div');
-  div.className='msg agent'; div.id=id;
-  div.innerHTML=`<div class="av">🤖</div><div class="mb"><div class="mm"><span class="mn">AutoDeploy Agent</span></div><div class="bbl"><div class="typing"><span></span><span></span><span></span></div></div></div>`;
-  msgs.appendChild(div); msgs.scrollTop=msgs.scrollHeight; return id;
-}
-function removeTyping(id){document.getElementById(id)?.remove();}
-function doCopy(btn){const pre=btn.closest('pre');navigator.clipboard.writeText(pre.querySelector('code')?.innerText||pre.innerText);btn.textContent='copied!';setTimeout(()=>btn.textContent='copy',2000);}
-function fmt(t){
-  t=t.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>`<pre><div class="pre-hdr"><span class="pre-lang">${l||'code'}</span><button class="cpbtn" onclick="doCopy(this)">copy</button></div><code>${esc(c.trim())}</code></pre>`);
-  t=t.replace(/`([^`\n]+)`/g,'<code>$1</code>');
-  t=t.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
-  t=t.replace(/\[([^\]]+)\]\((https?:[^\)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
-  t=t.replace(/^#{1,3} (.+)$/gm,'<h3>$1</h3>');
-  t=t.replace(/^[-*] (.+)$/gm,'<li>$1</li>');
-  t=t.replace(/^\d+\. (.+)$/gm,'<li>$1</li>');
-  t=t.replace(/\n\n/g,'<br><br>');
-  t=t.replace(/\n/g,'<br>');
-  return t;
-}
-function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function now(){return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
-function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
-function addToHistory(name,desc){history.unshift({name,desc,ts:Date.now()});if(history.length>12)history=history.slice(0,12);localStorage.setItem('ad_history',JSON.stringify(history));renderHistory();}
-function renderHistory(){const el=document.getElementById('histList');if(!history.length){el.innerHTML='<div style="font-size:11px;color:var(--text2);text-align:center;padding:20px 0">No deployments yet</div>';return;}el.innerHTML=history.map(h=>`<div class="dhi"><div class="dhi-name">📦 ${h.name}</div><div class="dhi-meta"><span class="dhi-time">${new Date(h.ts).toLocaleDateString()}</span><span class="dhi-badge ok">✓ pushed</span></div></div>`).join('');}
-
-init();
-</script>
-</body>
-</html>
