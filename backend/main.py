@@ -1,9 +1,8 @@
 import os
 import json
 import re
-import time
 import tempfile
-import subprocess
+import paramiko
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,58 +19,86 @@ app.add_middleware(
 )
 
 # ── Environment variables ──────────────────────────────────────────────────────
-GEMINI_KEY          = os.environ.get("GEMINI_KEY", "")
-DH_USERNAME         = os.environ.get("DH_USERNAME", "")
-DH_TOKEN            = os.environ.get("DH_TOKEN", "")
-AZURE_RG            = os.environ.get("AZURE_RG", "")
-ACA_ENV             = os.environ.get("ACA_ENV", "")
-ACR_NAME            = os.environ.get("ACR_NAME", "")
-AZURE_CLIENT_ID     = os.environ.get("AZURE_CLIENT_ID", "")
-AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
-AZURE_TENANT_ID     = os.environ.get("AZURE_TENANT_ID", "")
-AZURE_SUB_ID        = os.environ.get("AZURE_SUB_ID", "")
+GEMINI_KEY   = os.environ.get("GEMINI_KEY", "")
+DH_USERNAME  = os.environ.get("DH_USERNAME", "")
+DH_TOKEN     = os.environ.get("DH_TOKEN", "")
+VM_IP        = os.environ.get("VM_IP", "")
+VM_USERNAME  = os.environ.get("VM_USERNAME", "")
+VM_PASSWORD  = os.environ.get("VM_PASSWORD", "")
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
 
-# ── Azure login ────────────────────────────────────────────────────────────────
-def do_azure_login():
-    """Try managed identity first, fall back to service principal."""
-
-    # Managed identity (preferred — no credentials needed)
-    r = subprocess.run(
-        ["az", "login", "--identity"],
-        capture_output=True, text=True
-    )
-    if r.returncode == 0:
-        print("Azure login via managed identity ✅")
-        if AZURE_SUB_ID:
-            subprocess.run(
-                ["az", "account", "set", "--subscription", AZURE_SUB_ID],
-                capture_output=True, text=True
-            )
-        return
-
-    # Service principal fallback
-    if not all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]):
-        raise HTTPException(500, "Azure login failed: no managed identity and service principal credentials missing")
-
-    r2 = subprocess.run([
-        "az", "login", "--service-principal",
-        "--username", AZURE_CLIENT_ID,
-        "--password", AZURE_CLIENT_SECRET,
-        "--tenant",   AZURE_TENANT_ID
-    ], capture_output=True, text=True)
-
-    if r2.returncode != 0:
-        raise HTTPException(500, f"Azure login failed: {r2.stderr}")
-
-    if AZURE_SUB_ID:
-        subprocess.run(
-            ["az", "account", "set", "--subscription", AZURE_SUB_ID],
-            capture_output=True, text=True
+# ── SSH helper ─────────────────────────────────────────────────────────────────
+def ssh_run(commands: list[str]) -> str:
+    """Connect to VM via SSH and run commands. Returns combined output."""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            hostname=VM_IP,
+            username=VM_USERNAME,
+            password=VM_PASSWORD,
+            timeout=30
         )
-    print("Azure login via service principal ✅")
+        output = []
+        for cmd in commands:
+            stdin, stdout, stderr = client.exec_command(cmd, timeout=300)
+            out = stdout.read().decode().strip()
+            err = stderr.read().decode().strip()
+            exit_code = stdout.channel.recv_exit_status()
+            if exit_code != 0:
+                raise Exception(f"Command failed: {cmd}\nError: {err}")
+            if out:
+                output.append(out)
+        return "\n".join(output)
+    finally:
+        client.close()
+
+
+def ssh_copy_files(files: dict, remote_dir: str):
+    """Copy project files to VM via SFTP."""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            hostname=VM_IP,
+            username=VM_USERNAME,
+            password=VM_PASSWORD,
+            timeout=30
+        )
+        sftp = client.open_sftp()
+
+        # Create remote directory
+        try:
+            sftp.mkdir(remote_dir)
+        except Exception:
+            pass  # already exists
+
+        # Upload each file
+        for filename, content in files.items():
+            remote_path = f"{remote_dir}/{filename}"
+            with sftp.file(remote_path, 'w') as f:
+                f.write(content)
+
+        sftp.close()
+    finally:
+        client.close()
+
+
+def find_free_port() -> int:
+    """Find a free port on the VM between 8100-8999."""
+    try:
+        result = ssh_run([
+            "ss -tlnp | awk '{print $4}' | grep -oP ':\\K[0-9]+' | sort -n | uniq"
+        ])
+        used_ports = set(int(p) for p in result.split('\n') if p.isdigit())
+        for port in range(8100, 9000):
+            if port not in used_ports:
+                return port
+        raise Exception("No free ports available in range 8100-8999")
+    except Exception:
+        return 8100  # fallback
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -87,12 +114,10 @@ class DeployRequest(BaseModel):
 @app.get("/health")
 def health():
     return {
-        "status":   "ok",
-        "gemini":   bool(GEMINI_KEY),
-        "docker":   bool(DH_USERNAME and DH_TOKEN),
-        "azure":    bool(AZURE_RG and ACA_ENV),
-        "acr":      bool(ACR_NAME),
-        "az_creds": bool(AZURE_CLIENT_ID and AZURE_CLIENT_SECRET and AZURE_TENANT_ID),
+        "status":  "ok",
+        "gemini":  bool(GEMINI_KEY),
+        "docker":  bool(DH_USERNAME and DH_TOKEN),
+        "vm":      bool(VM_IP and VM_USERNAME and VM_PASSWORD),
     }
 
 
@@ -123,33 +148,23 @@ async def status():
     except Exception as e:
         results["dockerhub"] = f"❌ {str(e)}"
 
-    results["azure_rg"]  = f"✅ {AZURE_RG}"  if AZURE_RG  else "❌ Not set"
-    results["azure_env"] = f"✅ {ACA_ENV}"   if ACA_ENV   else "❌ Not set"
-    results["acr"]       = f"✅ {ACR_NAME}"  if ACR_NAME  else "❌ Not set"
-    results["az_creds"]  = "✅ Set" if all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]) else "⚠️ Using managed identity"
-
-    # Azure CLI + list apps
+    # VM SSH
     try:
-        do_azure_login()
-        apps = subprocess.run([
-            "az", "containerapp", "list",
-            "--resource-group", AZURE_RG,
-            "--query", "[].{name:name, url:properties.configuration.ingress.fqdn}",
-            "-o", "json"
-        ], capture_output=True, text=True, timeout=15)
-
-        app_list = json.loads(apps.stdout or "[]") if apps.returncode == 0 else []
-        results["azure_cli"]     = "✅ Logged in"
-        results["deployed_apps"] = app_list if app_list else "No apps deployed yet"
+        out = ssh_run(["echo ok && docker --version"])
+        results["vm"] = f"✅ Connected ({VM_IP}) — {out.split(chr(10))[-1]}"
     except Exception as e:
-        results["azure_cli"]     = f"⚠️ {str(e)[:80]}"
-        results["deployed_apps"] = "Login needed"
+        results["vm"] = f"❌ {str(e)[:80]}"
 
-    all_ok = all([
-        "✅" in str(results.get("gemini", "")),
-        "✅" in str(results.get("dockerhub", "")),
-        bool(AZURE_RG), bool(ACA_ENV), bool(ACR_NAME),
-    ])
+    # Running containers
+    try:
+        containers = ssh_run([
+            "docker ps --format '{{.Names}} | {{.Ports}}' 2>/dev/null || echo 'none'"
+        ])
+        results["running_apps"] = containers if containers else "No containers running"
+    except Exception:
+        results["running_apps"] = "Could not check"
+
+    all_ok = all("✅" in str(results.get(k, "")) for k in ["gemini", "dockerhub", "vm"])
     results["overall"] = "✅ All systems ready! Type your requirement to deploy." if all_ok else "⚠️ Some issues found"
 
     return results
@@ -181,7 +196,7 @@ Rules:
 - Dockerfile: python:3.11-slim base, non-root user, EXPOSE port, CMD to run app
 - requirements.txt: all pip packages, one per line
 - projectName: lowercase letters, numbers, hyphens ONLY, max 32 chars
-- Default port: 8080
+- Default port: 8080 inside container (host port assigned dynamically)
 - Do NOT include GitHub Actions workflows"""
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}"
@@ -215,106 +230,58 @@ Rules:
 async def deploy(req: DeployRequest):
 
     # Validate config
-    if not ACR_NAME:
-        raise HTTPException(500, "ACR_NAME not set")
-    if not AZURE_RG or not ACA_ENV:
-        raise HTTPException(500, "AZURE_RG or ACA_ENV not set")
+    if not all([VM_IP, VM_USERNAME, VM_PASSWORD]):
+        raise HTTPException(500, "VM credentials not configured (VM_IP, VM_USERNAME, VM_PASSWORD)")
+    if not all([DH_USERNAME, DH_TOKEN]):
+        raise HTTPException(500, "Docker Hub credentials not configured")
 
     project      = req.project
     project_name = project.get("projectName", "my-app")
     files        = project.get("files", {})
-    port         = project.get("port", 8080)
-    image_tag    = f"{ACR_NAME}.azurecr.io/{project_name}:latest"
+    container_port = project.get("port", 8080)
+    image_tag    = f"{DH_USERNAME}/{project_name}:latest"
+    remote_dir   = f"/tmp/{project_name}"
 
-    # Step 1: Login to Azure
-    do_azure_login()
+    # Step 1: Copy files to VM
+    ssh_copy_files(files, remote_dir)
 
-    # Step 2: Write files and build via ACR Tasks
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for filename, content in files.items():
-            filepath = os.path.join(tmpdir, filename)
-            dirpath = os.path.dirname(filepath)
-            if dirpath:
-                os.makedirs(dirpath, exist_ok=True)
-            with open(filepath, "w") as f:
-                f.write(content)
+    # Step 2: Build image on VM
+    ssh_run([
+        f"cd {remote_dir} && docker build -t {image_tag} ."
+    ])
 
-        build = subprocess.run([
-            "az", "acr", "build",
-            "--registry", ACR_NAME,
-            "--image", f"{project_name}:latest",
-            "--file", os.path.join(tmpdir, "Dockerfile"),
-            tmpdir
-        ], capture_output=True, text=True, timeout=300)
+    # Step 3: Login to Docker Hub and push image
+    ssh_run([
+        f"echo '{DH_TOKEN}' | docker login -u '{DH_USERNAME}' --password-stdin",
+        f"docker push {image_tag}"
+    ])
 
-        if build.returncode != 0:
-            raise HTTPException(500, f"ACR build failed: {build.stderr}")
+    # Step 4: Stop and remove old container if exists
+    try:
+        ssh_run([
+            f"docker stop {project_name} 2>/dev/null || true",
+            f"docker rm {project_name} 2>/dev/null || true"
+        ])
+    except Exception:
+        pass
 
-    # Step 3: Delete old container app if exists
-    check = subprocess.run([
-        "az", "containerapp", "show",
-        "--name", project_name,
-        "--resource-group", AZURE_RG,
-        "--query", "name", "-o", "tsv"
-    ], capture_output=True, text=True)
+    # Step 5: Find free port and run container
+    host_port = find_free_port()
+    ssh_run([
+        f"docker pull {image_tag}",
+        f"docker run -d --name {project_name} --restart unless-stopped -p {host_port}:{container_port} {image_tag}"
+    ])
 
-    if check.returncode == 0 and check.stdout.strip():
-        delete = subprocess.run([
-            "az", "containerapp", "delete",
-            "--name", project_name,
-            "--resource-group", AZURE_RG,
-            "--yes"
-        ], capture_output=True, text=True)
-
-        if delete.returncode != 0:
-            raise HTTPException(500, f"Failed to delete old app: {delete.stderr}")
-
-        # Wait until deletion confirmed (max 3 min)
-        for i in range(18):
-            still = subprocess.run([
-                "az", "containerapp", "show",
-                "--name", project_name,
-                "--resource-group", AZURE_RG,
-                "--query", "name", "-o", "tsv"
-            ], capture_output=True, text=True)
-            if still.returncode != 0 or not still.stdout.strip():
-                print(f"Deletion confirmed after {i+1} checks")
-                break
-            time.sleep(10)
-
-    # Step 4: Create new container app
-    create = subprocess.run([
-        "az", "containerapp", "create",
-        "--name", project_name,
-        "--resource-group", AZURE_RG,
-        "--environment", ACA_ENV,
-        "--image", image_tag,
-        "--target-port", str(port),
-        "--ingress", "external",
-        "--min-replicas", "0",
-        "--max-replicas", "3",
-        "--cpu", "0.5",
-        "--memory", "1.0Gi",
-        "--registry-server", f"{ACR_NAME}.azurecr.io"
-    ], capture_output=True, text=True)
-
-    if create.returncode != 0:
-        raise HTTPException(500, f"Deploy failed: {create.stderr}")
-
-    # Step 5: Get app URL
-    url_res = subprocess.run([
-        "az", "containerapp", "show",
-        "--name", project_name,
-        "--resource-group", AZURE_RG,
-        "--query", "properties.configuration.ingress.fqdn",
-        "-o", "tsv"
-    ], capture_output=True, text=True)
-
-    app_url = f"https://{url_res.stdout.strip()}" if url_res.stdout.strip() else "Check Azure Portal"
+    # Step 6: Cleanup temp files
+    try:
+        ssh_run([f"rm -rf {remote_dir}"])
+    except Exception:
+        pass
 
     return {
         "success":     True,
         "projectName": project_name,
         "image":       image_tag,
-        "appUrl":      app_url,
+        "hostPort":    host_port,
+        "appUrl":      f"http://{VM_IP}:{host_port}",
     }
