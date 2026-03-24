@@ -148,7 +148,7 @@ async def status():
     except Exception as e:
         results["dockerhub"] = f"❌ {str(e)}"
 
-    # VM SSH
+    # VM SSH k
     try:
         out = ssh_run(["echo ok && docker --version"])
         results["vm"] = f"✅ Connected ({VM_IP}) — {out.split(chr(10))[-1]}"
