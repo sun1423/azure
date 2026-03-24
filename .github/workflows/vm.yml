@@ -1,0 +1,21 @@
+name: Test VM Connection
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ssh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test SSH
+        run: |
+          echo "Testing SSH to VM..."
+          nc -zv ${{ secrets.VM_IP }} 22
+
+      - name: Try SSH Login
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+          
+          sshpass -p "${{ secrets.VM_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.VM_USERNAME }}@${{ secrets.VM_IP }} "echo SSH SUCCESS"
