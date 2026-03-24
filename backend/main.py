@@ -3,7 +3,6 @@ import json
 import re
 import tempfile
 import subprocess
-import asyncio
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,99 +18,66 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Secrets from Azure Container Apps environment variables
-GEMINI_KEY         = os.environ.get("GEMINI_KEY", "")
-DH_USERNAME        = os.environ.get("DH_USERNAME", "")
-DH_TOKEN           = os.environ.get("DH_TOKEN", "")
-AZURE_RG           = os.environ.get("AZURE_RG", "")
-ACA_ENV            = os.environ.get("ACA_ENV", "")
-ACR_NAME           = os.environ.get("ACR_NAME", "")
-AZURE_CREDENTIALS  = os.environ.get("AZURE_CREDENTIALS", "")
-AZURE_CLIENT_ID    = os.environ.get("AZURE_CLIENT_ID", "")
-AZURE_CLIENT_SECRET= os.environ.get("AZURE_CLIENT_SECRET", "")
-AZURE_TENANT_ID    = os.environ.get("AZURE_TENANT_ID", "")
-AZURE_SUB_ID       = os.environ.get("AZURE_SUB_ID", "")
-
-# Login to Azure on startup
-# Try managed identity first (best for ACA), fallback to service principal
-def azure_login():
-    # Try managed identity first
-    r = subprocess.run(
-        ["az", "login", "--identity"],
-        capture_output=True, text=True
-    )
-    if r.returncode == 0:
-        print("Azure login successful via managed identity")
-        return
-
-    # Fallback to service principal
-    if not AZURE_CREDENTIALS:
-        print("WARNING: AZURE_CREDENTIALS not set and managed identity failed")
-        return
-    try:
-        creds = json.loads(AZURE_CREDENTIALS)
-        r = subprocess.run([
-            "az", "login", "--service-principal",
-            "--username", creds.get("clientId", ""),
-            "--password", creds.get("clientSecret", ""),
-            "--tenant",   creds.get("tenantId", "")
-        ], capture_output=True, text=True)
-        if r.returncode == 0:
-            subprocess.run(["az", "account", "set",
-                "--subscription", creds.get("subscriptionId", "")],
-                capture_output=True, text=True)
-            print("Azure login successful via service principal")
-        else:
-            print(f"Azure login failed: {r.stderr}")
-    except Exception as e:
-        print(f"Azure login error: {e}")
-
-azure_login()
-
-AZURE_CLIENT_ID    = os.environ.get("AZURE_CLIENT_ID", "")
-AZURE_CLIENT_SECRET= os.environ.get("AZURE_CLIENT_SECRET", "")
-AZURE_TENANT_ID    = os.environ.get("AZURE_TENANT_ID", "")
-
-# Auto-login to Azure on startup using service principal
-def az_login():
-    if AZURE_CLIENT_ID and AZURE_CLIENT_SECRET and AZURE_TENANT_ID:
-        result = subprocess.run([
-            "az", "login",
-            "--service-principal",
-            "--username", AZURE_CLIENT_ID,
-            "--password", AZURE_CLIENT_SECRET,
-            "--tenant", AZURE_TENANT_ID
-        ], capture_output=True, text=True)
-        if result.returncode == 0:
-            print("Azure login successful")
-        else:
-            print("Azure login failed:", result.stderr)
-    else:
-        print("Azure credentials not set - skipping login")
-
-az_login()
+# ── Env vars (set via deploy-backend.yml → Azure Container Apps) ──────────────
+GEMINI_KEY          = os.environ.get("GEMINI_KEY", "")
+DH_USERNAME         = os.environ.get("DH_USERNAME", "")
+DH_TOKEN            = os.environ.get("DH_TOKEN", "")
+AZURE_RG            = os.environ.get("AZURE_RG", "")
+ACA_ENV             = os.environ.get("ACA_ENV", "")
+ACR_NAME            = os.environ.get("ACR_NAME", "")
+AZURE_CLIENT_ID     = os.environ.get("AZURE_CLIENT_ID", "")
+AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
+AZURE_TENANT_ID     = os.environ.get("AZURE_TENANT_ID", "")
+AZURE_SUB_ID        = os.environ.get("AZURE_SUB_ID", "")
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
+# ── Azure login helper ─────────────────────────────────────────────────────────
+def do_azure_login():
+    """Login to Azure using service principal credentials."""
+    if not all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]):
+        raise HTTPException(500, "Azure credentials missing: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET or AZURE_TENANT_ID not set")
+
+    login = subprocess.run([
+        "az", "login", "--service-principal",
+        "--username", AZURE_CLIENT_ID,
+        "--password", AZURE_CLIENT_SECRET,
+        "--tenant",   AZURE_TENANT_ID
+    ], capture_output=True, text=True)
+
+    if login.returncode != 0:
+        raise HTTPException(500, f"Azure login failed: {login.stderr}")
+
+    if AZURE_SUB_ID:
+        subprocess.run([
+            "az", "account", "set",
+            "--subscription", AZURE_SUB_ID
+        ], capture_output=True, text=True)
+
+
+# ── Models ─────────────────────────────────────────────────────────────────────
 class GenerateRequest(BaseModel):
     requirement: str
 
 class DeployRequest(BaseModel):
     project: dict
 
-# ── Health ────────────────────────────────────────────────────────────────────
+
+# ── Health ─────────────────────────────────────────────────────────────────────
 @app.get("/")
 @app.get("/health")
 def health():
     return {
-        "status": "ok",
+        "status":  "ok",
         "gemini":  bool(GEMINI_KEY),
         "docker":  bool(DH_USERNAME and DH_TOKEN),
         "azure":   bool(AZURE_RG and ACA_ENV),
         "acr":     bool(ACR_NAME),
+        "az_creds": bool(AZURE_CLIENT_ID and AZURE_CLIENT_SECRET and AZURE_TENANT_ID),
     }
 
-# ── Full status check ─────────────────────────────────────────────────────────
+
+# ── Status ─────────────────────────────────────────────────────────────────────
 @app.get("/status")
 async def status():
     results = {}
@@ -121,74 +87,71 @@ async def status():
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}",
-                json={"contents": [{"role": "user", "parts": [{"text": "say ok"}]}],
-                      "generationConfig": {"maxOutputTokens": 5}}
+                json={
+                    "contents": [{"role": "user", "parts": [{"text": "say ok"}]}],
+                    "generationConfig": {"maxOutputTokens": 5}
+                }
             )
-            results["gemini"] = "✅ Connected" if res.is_success else f"❌ Error {res.status_code}"
+            results["gemini"] = "✅ Connected" if res.is_success else f"❌ Error {res.status_code}: {res.text[:100]}"
     except Exception as e:
         results["gemini"] = f"❌ {str(e)}"
 
-    # Check Docker Hub credentials
+    # Check Docker Hub
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            res = await client.get(
-                f"https://hub.docker.com/v2/users/{DH_USERNAME}/",
-            )
-            results["dockerhub"] = "✅ Connected" if res.status_code in [200, 401] else f"❌ Error {res.status_code}"
-            results["dockerhub_user"] = DH_USERNAME
+            res = await client.get(f"https://hub.docker.com/v2/users/{DH_USERNAME}/")
+            results["dockerhub"] = f"✅ Connected ({DH_USERNAME})" if res.status_code in [200, 401] else f"❌ Error {res.status_code}"
     except Exception as e:
         results["dockerhub"] = f"❌ {str(e)}"
 
-    # Check Azure config
-    results["azure_rg"]  = f"✅ {AZURE_RG}"  if AZURE_RG  else "❌ Not set"
-    results["azure_env"] = f"✅ {ACA_ENV}"   if ACA_ENV   else "❌ Not set"
+    results["azure_rg"]   = f"✅ {AZURE_RG}"  if AZURE_RG  else "❌ Not set"
+    results["azure_env"]  = f"✅ {ACA_ENV}"   if ACA_ENV   else "❌ Not set"
+    results["acr"]        = f"✅ {ACR_NAME}"  if ACR_NAME  else "❌ Not set"
+    results["az_creds"]   = "✅ Set" if all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]) else "❌ Missing"
 
-    # Try Azure CLI login first
-    azure_login()
-
-    # Check Azure CLI
+    # Try Azure login and list apps
     try:
-        check = subprocess.run(
-            ["az", "account", "show", "--query", "name", "-o", "tsv"],
-            capture_output=True, text=True, timeout=10
-        )
-        results["azure_cli"] = "✅ Logged in" if check.returncode == 0 else "⚠️ Not logged in (will login on deploy)"
-    except Exception as e:
-        results["azure_cli"] = "⚠️ Not checked"
+        do_azure_login()
+        apps = subprocess.run([
+            "az", "containerapp", "list",
+            "--resource-group", AZURE_RG,
+            "--query", "[].{name:name, url:properties.configuration.ingress.fqdn}",
+            "-o", "json"
+        ], capture_output=True, text=True, timeout=15)
 
-    # List existing container apps
-    try:
-        apps = subprocess.run(
-            ["az", "containerapp", "list",
-             "--resource-group", AZURE_RG,
-             "--query", "[].{name:name, url:properties.configuration.ingress.fqdn}",
-             "-o", "json"],
-            capture_output=True, text=True, timeout=15
-        )
         if apps.returncode == 0:
             app_list = json.loads(apps.stdout or "[]")
             results["deployed_apps"] = app_list if app_list else "No apps deployed yet"
+            results["azure_cli"] = "✅ Logged in"
         else:
-            results["deployed_apps"] = "No apps yet (login happens on deploy)"
+            results["azure_cli"] = "❌ Login failed"
+            results["deployed_apps"] = []
     except Exception as e:
-        results["deployed_apps"] = "No apps yet"
+        results["azure_cli"] = f"⚠️ {str(e)[:80]}"
+        results["deployed_apps"] = []
 
-    all_ok = all("✅" in str(v) for v in [results["gemini"], results["dockerhub"], results["azure_rg"], results["azure_env"]])
-    results["overall"] = "✅ All systems ready! Type your requirement to deploy." if all_ok else "⚠️ Some issues found"
+    all_ok = all([
+        "✅" in str(results.get("gemini", "")),
+        "✅" in str(results.get("dockerhub", "")),
+        bool(AZURE_RG), bool(ACA_ENV), bool(ACR_NAME),
+        bool(AZURE_CLIENT_ID and AZURE_CLIENT_SECRET),
+    ])
+    results["overall"] = "✅ All systems ready! Type your requirement to deploy." if all_ok else "⚠️ Some issues found — check above"
 
     return results
 
-# ── Generate project via Gemini ───────────────────────────────────────────────
+
+# ── Generate ───────────────────────────────────────────────────────────────────
 @app.post("/generate")
 async def generate(req: GenerateRequest):
     if not GEMINI_KEY:
-        raise HTTPException(500, "GEMINI_KEY not configured on backend")
+        raise HTTPException(500, "GEMINI_KEY not configured")
 
     system_prompt = f"""You are an autonomous DevOps coding agent. Generate a complete deployable Python project.
 
-Respond with ONLY valid JSON — no markdown fences, no extra text:
+Respond with ONLY valid JSON — no markdown fences, no extra text outside the JSON:
 {{
-  "projectName": "lowercase-kebab-name",
+  "projectName": "lowercase-kebab-name-max-32-chars",
   "description": "one line description",
   "port": 8080,
   "files": {{
@@ -201,11 +164,11 @@ Respond with ONLY valid JSON — no markdown fences, no extra text:
 
 Rules:
 - Python: production-ready, proper error handling, logging to stdout
-- Dockerfile: python:3.11-slim base, non-root user, EXPOSE correct port, CMD uvicorn or flask run
+- Dockerfile: use python:3.11-slim as base, create non-root user, EXPOSE the correct port, CMD to run the app
 - requirements.txt: all pip packages needed, one per line
-- projectName: lowercase letters, numbers, hyphens only, max 32 chars
-- Port should match what the app listens on (default 8080)
-- Do NOT include any GitHub Actions workflow — deployment is handled separately"""
+- projectName: lowercase letters, numbers, hyphens ONLY, max 32 chars, no spaces
+- Port must match what the app listens on (use 8080 as default)
+- Do NOT include GitHub Actions workflows — deployment is handled by the backend"""
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}"
 
@@ -219,9 +182,13 @@ Rules:
     if not res.is_success:
         raise HTTPException(500, f"Gemini error: {res.text}")
 
-    data = res.json()
-    text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-    text = text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+    text = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+    text = text.strip()
+    # Strip markdown fences if present
+    text = re.sub(r'^```json\s*', '', text)
+    text = re.sub(r'^```\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+    text = text.strip()
 
     try:
         project = json.loads(text)
@@ -234,15 +201,17 @@ Rules:
 
     return project
 
-# ── Deploy: build via ACR Task → push to ACR → deploy to ACA ─────────────────
+
+# ── Deploy ─────────────────────────────────────────────────────────────────────
 @app.post("/deploy")
 async def deploy(req: DeployRequest):
-    if not AZURE_RG or not ACA_ENV:
-        raise HTTPException(500, "Azure credentials not configured")
-
-    ACR_NAME = os.environ.get("ACR_NAME", "")
+    # Validate all required config
     if not ACR_NAME:
         raise HTTPException(500, "ACR_NAME not configured")
+    if not AZURE_RG or not ACA_ENV:
+        raise HTTPException(500, "AZURE_RG or ACA_ENV not configured")
+    if not all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]):
+        raise HTTPException(500, "Azure credentials not configured (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)")
 
     project      = req.project
     project_name = project.get("projectName", "my-app")
@@ -250,28 +219,10 @@ async def deploy(req: DeployRequest):
     port         = project.get("port", 8080)
     image_tag    = f"{ACR_NAME}.azurecr.io/{project_name}:latest"
 
-    # Login to Azure before doing anything
-    client_id     = AZURE_CLIENT_ID
-    client_secret = AZURE_CLIENT_SECRET
-    tenant_id     = AZURE_TENANT_ID
-    sub_id        = AZURE_SUB_ID
+    # Step 1: Login to Azure
+    do_azure_login()
 
-    if not client_id:
-        raise HTTPException(500, "Azure credentials not set. Need AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, AZURE_SUB_ID")
-
-    login = subprocess.run([
-        "az", "login", "--service-principal",
-        "--username", client_id,
-        "--password", client_secret,
-        "--tenant",   tenant_id
-    ], capture_output=True, text=True)
-    if login.returncode != 0:
-        raise HTTPException(500, f"Azure login failed: {login.stderr}")
-    subprocess.run([
-        "az", "account", "set", "--subscription", sub_id
-    ], capture_output=True, text=True)
-
-    # Write files to temp directory
+    # Step 2: Write files to temp dir and build via ACR Tasks
     with tempfile.TemporaryDirectory() as tmpdir:
         for filename, content in files.items():
             filepath = os.path.join(tmpdir, filename)
@@ -281,8 +232,8 @@ async def deploy(req: DeployRequest):
             with open(filepath, "w") as f:
                 f.write(content)
 
-        # Build image using ACR Task (runs in Azure cloud - no Docker daemon needed)
-        build_result = subprocess.run([
+        # Build image using ACR Tasks (runs in Azure cloud — no Docker daemon needed)
+        build = subprocess.run([
             "az", "acr", "build",
             "--registry", ACR_NAME,
             "--image", f"{project_name}:latest",
@@ -290,21 +241,18 @@ async def deploy(req: DeployRequest):
             tmpdir
         ], capture_output=True, text=True, timeout=300)
 
-        if build_result.returncode != 0:
-            raise HTTPException(500, f"ACR build failed: {build_result.stderr}")
+        if build.returncode != 0:
+            raise HTTPException(500, f"ACR build failed: {build.stderr}")
 
-    # Deploy to Azure Container Apps using az CLI
-    check = subprocess.run(
-        ["az", "containerapp", "show",
-         "--name", project_name,
-         "--resource-group", AZURE_RG,
-         "--query", "name", "-o", "tsv"],
-        capture_output=True, text=True
-    )
+    # Step 3: Delete old container app if exists
+    check = subprocess.run([
+        "az", "containerapp", "show",
+        "--name", project_name,
+        "--resource-group", AZURE_RG,
+        "--query", "name", "-o", "tsv"
+    ], capture_output=True, text=True)
 
     if check.returncode == 0 and check.stdout.strip():
-        # Delete old container app first
-        print(f"Deleting old container app: {project_name}")
         delete = subprocess.run([
             "az", "containerapp", "delete",
             "--name", project_name,
@@ -312,13 +260,21 @@ async def deploy(req: DeployRequest):
             "--yes"
         ], capture_output=True, text=True)
         if delete.returncode != 0:
-            raise HTTPException(500, f"Failed to delete old container: {delete.stderr}")
-        # Wait for deletion to complete
+            raise HTTPException(500, f"Failed to delete old app: {delete.stderr}")
+        # Wait for deletion
         import time
-        time.sleep(10)
+        for _ in range(20):
+            still = subprocess.run([
+                "az", "containerapp", "show",
+                "--name", project_name,
+                "--resource-group", AZURE_RG,
+                "--query", "name", "-o", "tsv"
+            ], capture_output=True, text=True)
+            if still.returncode != 0 or not still.stdout.strip():
+                break
+            time.sleep(10)
 
-    # Create fresh container app
-    print(f"Creating new container app: {project_name}")
+    # Step 4: Create new container app
     create = subprocess.run([
         "az", "containerapp", "create",
         "--name", project_name,
@@ -330,13 +286,14 @@ async def deploy(req: DeployRequest):
         "--min-replicas", "0",
         "--max-replicas", "3",
         "--cpu", "0.5",
-        "--memory", "1.0Gi"
+        "--memory", "1.0Gi",
+        "--registry-server", f"{ACR_NAME}.azurecr.io"
     ], capture_output=True, text=True)
 
     if create.returncode != 0:
         raise HTTPException(500, f"Azure deploy failed: {create.stderr}")
 
-    # Get app URL
+    # Step 5: Get app URL
     url_result = subprocess.run([
         "az", "containerapp", "show",
         "--name", project_name,
