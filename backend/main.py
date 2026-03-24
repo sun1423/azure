@@ -31,7 +31,7 @@ AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
 AZURE_TENANT_ID     = os.environ.get("AZURE_TENANT_ID", "")
 AZURE_SUB_ID        = os.environ.get("AZURE_SUB_ID", "")
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "Gemini 2.5 Pro"
 
 
 # ── Azure login ────────────────────────────────────────────────────────────────
