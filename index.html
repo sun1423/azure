@@ -37,6 +37,7 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
 .dhi-meta{display:flex;align-items:center;gap:6px;margin-top:3px;}
 .dhi-time{font-size:10px;color:var(--text2);}
 .dhi-badge{font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(30,142,62,.1);color:var(--green);border:1px solid rgba(30,142,62,.2);}
+.dhi-url{font-size:10px;color:var(--blue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .steps{display:flex;align-items:center;padding:0 20px;height:44px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;}
 .step{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text2);padding:0 8px;}
 .snum{width:18px;height:18px;border-radius:50%;background:var(--border2);color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;}
@@ -53,8 +54,8 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
 .welcome h2{font-family:'Syne',sans-serif;font-size:23px;font-weight:800;}
 .welcome h2 span{color:var(--blue);}
 .welcome p{font-size:12px;color:var(--text2);max-width:460px;line-height:1.8;}
-.flow{display:flex;align-items:center;gap:5px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 16px;}
-.fs{display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:7px;min-width:60px;}
+.flow{display:flex;align-items:center;gap:5px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 16px;flex-wrap:wrap;justify-content:center;}
+.fs{display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:7px;min-width:58px;}
 .fsi{font-size:16px;}
 .fst{font-size:9px;color:var(--text2);letter-spacing:.5px;}
 .farr{color:var(--border2);font-size:14px;}
@@ -92,7 +93,6 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
 .bbl li{margin:4px 0;}
 .bbl strong{color:#b06a00;}
 .bbl a{color:var(--blue);}
-.bbl hr{border:none;border-top:1px solid var(--border);margin:11px 0;}
 .acard{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:12px 14px;margin:10px 0;display:flex;align-items:center;gap:12px;}
 .ac-ico{font-size:20px;flex-shrink:0;}
 .ac-body{flex:1;min-width:0;}
@@ -154,7 +154,7 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
     <div class="logo-icon">&#x1F916;</div>
     <div>
       <div class="logo-name"><em>Auto</em>Deploy Agent</div>
-      <div class="logo-tag">Gemini &middot; Docker Hub &middot; Azure Container Apps</div>
+      <div class="logo-tag">Gemini &middot; Docker Hub &middot; Azure VM</div>
     </div>
   </div>
   <div class="hdr-r">
@@ -172,15 +172,15 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
       <div class="plbl">Quick Start</div>
       <div class="plist">
         <div class="pi-item" onclick="fire('check status')"><span class="pio">&#x2705;</span>Check status</div>
-        <div class="pi-item" onclick="fire('Build a Python Flask REST API with /health endpoint')"><span class="pio">&#x1F40D;</span>Flask REST API</div>
-        <div class="pi-item" onclick="fire('Build a Python FastAPI app with async endpoints and SQLite')"><span class="pio">&#x26A1;</span>FastAPI + SQLite</div>
-        <div class="pi-item" onclick="fire('Build a Python URL health monitor that checks URLs every 5 minutes')"><span class="pio">&#x1F4E1;</span>URL Monitor</div>
+        <div class="pi-item" onclick="fire('Build a Python Flask REST API with /health endpoint that returns status and time')"><span class="pio">&#x1F40D;</span>Flask REST API</div>
+        <div class="pi-item" onclick="fire('Build a Python FastAPI app with async endpoints and SQLite database')"><span class="pio">&#x26A1;</span>FastAPI + SQLite</div>
+        <div class="pi-item" onclick="fire('Build a Python URL health monitor that checks URLs every 5 minutes and logs results')"><span class="pio">&#x1F4E1;</span>URL Monitor</div>
         <div class="pi-item" onclick="fire('Build a Python FastAPI CRUD API for managing todo items with SQLite')"><span class="pio">&#x1F4DD;</span>Todo CRUD API</div>
-        <div class="pi-item" onclick="fire('Build a Python script that fetches HackerNews top stories and saves to JSON')"><span class="pio">&#x1F5B7;</span>News Scraper</div>
+        <div class="pi-item" onclick="fire('Build a Python web scraper that fetches HackerNews top stories and saves to JSON')"><span class="pio">&#x1F5B7;</span>News Scraper</div>
       </div>
     </div>
     <div class="dhist">
-      <div class="plbl">Deploy History</div>
+      <div class="plbl">Deployed Apps</div>
       <div id="histList"><div style="font-size:11px;color:var(--text2);text-align:center;padding:20px 0">No deployments yet</div></div>
     </div>
   </div>
@@ -195,16 +195,16 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
       <div class="sarr">&rsaquo;</div>
       <div class="step" id="s4"><div class="snum" id="sn4">4</div>Build Image</div>
       <div class="sarr">&rsaquo;</div>
-      <div class="step" id="s5"><div class="snum" id="sn5">5</div>Push Docker</div>
+      <div class="step" id="s5"><div class="snum" id="sn5">5</div>Push Docker Hub</div>
       <div class="sarr">&rsaquo;</div>
-      <div class="step" id="s6"><div class="snum" id="sn6">6</div>Azure Live &#x2713;</div>
+      <div class="step" id="s6"><div class="snum" id="sn6">6</div>Run on VM &#x2713;</div>
     </div>
 
     <div class="msgs" id="msgs">
       <div class="welcome" id="welcome">
         <div class="wico">&#x1F680;</div>
         <h2>AutoDeploy <span>Agent</span></h2>
-        <p>Describe what you want to build. The agent writes the code, builds a Docker image, and deploys it directly to Azure Container Apps.</p>
+        <p>Describe what you want to build. The agent writes the code, builds a Docker image, pushes to Docker Hub, and runs it on your Azure VM automatically.</p>
         <div class="flow">
           <div class="fs"><span class="fsi">&#x1F4AC;</span><span class="fst">DESCRIBE</span></div>
           <div class="farr">&rarr;</div>
@@ -212,7 +212,9 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
           <div class="farr">&rarr;</div>
           <div class="fs"><span class="fsi">&#x1F433;</span><span class="fst">BUILD</span></div>
           <div class="farr">&rarr;</div>
-          <div class="fs"><span class="fsi">&#x2601;&#xFE0F;</span><span class="fst">AZURE</span></div>
+          <div class="fs"><span class="fsi">&#x2B06;</span><span class="fst">PUSH HUB</span></div>
+          <div class="farr">&rarr;</div>
+          <div class="fs"><span class="fsi">&#x1F5A5;</span><span class="fst">RUN VM</span></div>
         </div>
         <div class="qa-grid">
           <button class="qa" onclick="fire('Build a Python Flask REST API with /health and /hello endpoints')"><span class="qi">&#x1F40D;</span><span class="qt">Flask REST API</span><span class="qs">Health + endpoints</span></button>
@@ -226,12 +228,12 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
 
     <div class="inp-area">
       <div class="inp-wrap">
-        <textarea id="ui" placeholder="Describe what you want to build and deploy to Azure..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <textarea id="ui" placeholder="Describe what you want to build and deploy to your VM..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="snd" id="sndBtn" onclick="sendMsg()">&#x25B6;</button>
       </div>
       <div class="inp-foot">
         <span><span class="kbd">Enter</span> send &middot; <span class="kbd">Shift+Enter</span> newline</span>
-        <span style="color:var(--text2)">Backend &rarr; Gemini &middot; Docker Hub &middot; Azure</span>
+        <span style="color:var(--text2)">Gemini &rarr; Docker Hub &rarr; Azure VM</span>
       </div>
     </div>
   </div>
@@ -240,11 +242,11 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
 <div class="ovl" id="ovl">
   <div class="modal">
     <h3>&#x2699;&#xFE0F; Backend Configuration</h3>
-    <p>Enter the URL of your AutoDeploy backend on Azure Container Apps. All secrets are stored safely on the backend.</p>
+    <p>Enter the URL of your AutoDeploy backend running on your Azure VM (port 9000).</p>
     <div class="mf">
       <label>Backend URL</label>
-      <input type="text" id="backendUrl" placeholder="https://autodeploy-backend.XXX.azurecontainerapps.io" />
-      <div class="hint">Your Azure Container Apps backend URL</div>
+      <input type="text" id="backendUrl" placeholder="http://YOUR_VM_IP:9000" />
+      <div class="hint">Your VM IP with port 9000 e.g. http://20.1.2.3:9000</div>
     </div>
     <div id="cfgNotice"></div>
     <div class="mbtns">
@@ -277,62 +279,45 @@ function checkHealth() {
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (d.status === 'ok') {
-        var parts = [];
-        if (d.gemini) parts.push('Gemini');
-        if (d.docker) parts.push('Docker');
-        if (d.azure) parts.push('Azure');
-        setStatus('on', 'Connected: ' + parts.join(', '));
+        var ok = [];
+        if (d.gemini) ok.push('Gemini');
+        if (d.docker) ok.push('Docker');
+        if (d.vm)     ok.push('VM');
+        setStatus('on', 'Connected: ' + ok.join(', '));
       } else {
         setStatus('red', 'Backend error');
       }
     })
-    .catch(function() {
-      setStatus('red', 'Cannot reach backend');
-    });
+    .catch(function() { setStatus('red', 'Cannot reach backend'); });
 }
 
 function setStatus(state, text) {
-  var dot = document.getElementById('dot');
-  dot.className = state === 'on' ? 'dot on' : state === 'checking' ? 'dot checking' : 'dot';
+  document.getElementById('dot').className = state === 'on' ? 'dot on' : state === 'checking' ? 'dot checking' : 'dot';
   document.getElementById('stxt').textContent = text;
 }
 
-function openModal() {
-  document.getElementById('ovl').classList.add('open');
-}
-
-function closeModal() {
-  document.getElementById('ovl').classList.remove('open');
-}
+function openModal()  { document.getElementById('ovl').classList.add('open'); }
+function closeModal() { document.getElementById('ovl').classList.remove('open'); }
 
 function saveUrl() {
   var url = document.getElementById('backendUrl').value.trim().replace(/\/$/, '');
   var n = document.getElementById('cfgNotice');
-  if (!url) {
-    n.className = 'notice err';
-    n.textContent = 'Please enter your backend URL.';
-    return;
-  }
-  n.className = 'notice ok';
-  n.textContent = 'Testing connection...';
+  if (!url) { n.className = 'notice err'; n.textContent = 'Please enter backend URL.'; return; }
+  n.className = 'notice ok'; n.textContent = 'Testing...';
   fetch(url + '/health')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (d.status === 'ok') {
         BACKEND = url;
         localStorage.setItem('ad_backend', url);
-        n.textContent = 'Connected! Gemini:' + d.gemini + ' Docker:' + d.docker + ' Azure:' + d.azure;
+        n.textContent = 'Connected! Gemini:' + d.gemini + ' Docker:' + d.docker + ' VM:' + d.vm;
         checkHealth();
         setTimeout(closeModal, 1200);
       } else {
-        n.className = 'notice err';
-        n.textContent = 'Backend returned error.';
+        n.className = 'notice err'; n.textContent = 'Backend error.';
       }
     })
-    .catch(function(e) {
-      n.className = 'notice err';
-      n.textContent = 'Cannot connect: ' + e.message;
-    });
+    .catch(function(e) { n.className = 'notice err'; n.textContent = 'Cannot connect: ' + e.message; });
 }
 
 function setStep(n) {
@@ -344,24 +329,9 @@ function setStep(n) {
   }
 }
 
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
-
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMsg();
-  }
-}
-
-function fire(t) {
-  var ui = document.getElementById('ui');
-  ui.value = t;
-  autoResize(ui);
-  ui.focus();
-}
+function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
+function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
+function fire(t) { var ui = document.getElementById('ui'); ui.value = t; autoResize(ui); ui.focus(); }
 
 function sendMsg() {
   var inp = document.getElementById('ui');
@@ -373,8 +343,7 @@ function sendMsg() {
   if (welcome) welcome.remove();
 
   addMsg('user', txt);
-  inp.value = '';
-  inp.style.height = 'auto';
+  inp.value = ''; inp.style.height = 'auto';
   document.getElementById('sndBtn').disabled = true;
 
   // Status check
@@ -384,37 +353,20 @@ function sendMsg() {
       .then(function(r) { return r.json(); })
       .then(function(d) {
         removeTyping(tid);
-        var appsText = 'None yet';
-        if (Array.isArray(d.deployed_apps) && d.deployed_apps.length > 0) {
-          appsText = d.deployed_apps.map(function(a) {
-            return '- ' + a.name + ' -> https://' + a.url;
-          }).join('\n');
-        } else if (typeof d.deployed_apps === 'string') {
-          appsText = d.deployed_apps;
+        var appsText = 'None';
+        if (typeof d.running_apps === 'string' && d.running_apps !== 'No containers running') {
+          appsText = d.running_apps;
         }
-        var msg = document.createElement('div');
-        msg.className = 'msg agent';
-        msg.innerHTML = '<div class="av">&#x1F916;</div><div class="mb"><div class="mm"><span class="mn">AutoDeploy Agent</span></div>' +
-          '<div class="bbl">' +
-          '<h3>' + (d.overall || 'Status Check') + '</h3>' +
-          '<div style="font-size:12px;line-height:2">' +
-          '<div>Gemini AI: ' + (d.gemini || 'unknown') + '</div>' +
-          '<div>Docker Hub: ' + (d.dockerhub || 'unknown') + '</div>' +
-          '<div>Azure RG: ' + (d.azure_rg || 'unknown') + '</div>' +
-          '<div>Azure ENV: ' + (d.azure_env || 'unknown') + '</div>' +
-          '<div>Azure CLI: ' + (d.azure_cli || 'unknown') + '</div>' +
-          '<div>Deployed Apps: ' + appsText + '</div>' +
-          '</div></div></div>';
-        document.getElementById('msgs').appendChild(msg);
-        document.getElementById('msgs').scrollTop = 9999;
+        addMsg('agent',
+          d.overall + '\n\n' +
+          'Gemini AI: ' + d.gemini + '\n' +
+          'Docker Hub: ' + d.dockerhub + '\n' +
+          'VM SSH: ' + d.vm + '\n' +
+          'Running containers:\n' + (d.running_apps || 'None')
+        );
       })
-      .catch(function(e) {
-        removeTyping(tid);
-        addMsg('agent', 'Cannot reach backend: ' + e.message);
-      })
-      .finally(function() {
-        document.getElementById('sndBtn').disabled = false;
-      });
+      .catch(function(e) { removeTyping(tid); addMsg('agent', 'Cannot reach backend: ' + e.message); })
+      .finally(function() { document.getElementById('sndBtn').disabled = false; });
     return;
   }
 
@@ -426,7 +378,7 @@ function sendMsg() {
     body: JSON.stringify({ requirement: txt })
   })
   .then(function(r) {
-    if (!r.ok) return r.json().then(function(e) { throw new Error(e.detail || 'Backend error ' + r.status); });
+    if (!r.ok) return r.json().then(function(e) { throw new Error(e.detail || 'Error ' + r.status); });
     return r.json();
   })
   .then(function(project) {
@@ -437,12 +389,10 @@ function sendMsg() {
   })
   .catch(function(err) {
     removeTyping(tid);
-    addMsg('agent', 'Error: ' + err.message + '\n\nBackend: ' + BACKEND);
+    addMsg('agent', 'Error: ' + err.message);
     setStep(1);
   })
-  .finally(function() {
-    document.getElementById('sndBtn').disabled = false;
-  });
+  .finally(function() { document.getElementById('sndBtn').disabled = false; });
 }
 
 function showProject(p) {
@@ -458,7 +408,7 @@ function showProject(p) {
     var ext = fname.indexOf('.') >= 0 ? '.' + fname.split('.').pop() : fname;
     var lang = langMap[ext] || langMap[fname] || 'text';
     filesHtml += '<div style="margin:10px 0">' +
-      '<div style="font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">' + fname + '</div>' +
+      '<div style="font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">&#x1F4C4; ' + fname + '</div>' +
       '<pre><div class="pre-hdr"><span class="pre-lang">' + lang + '</span><button class="cpbtn" onclick="doCopy(this)">copy</button></div>' +
       '<code>' + esc(fcontent) + '</code></pre></div>';
   }
@@ -466,18 +416,17 @@ function showProject(p) {
     '<div class="mb">' +
     '<div class="mm"><span class="mn">AutoDeploy Agent</span><span>' + getTime() + '</span></div>' +
     '<div class="bbl">' +
-    '<h3>Generated: ' + p.projectName + '</h3>' +
+    '<h3>&#x2705; Generated: ' + p.projectName + '</h3>' +
     '<p style="font-size:12px;color:var(--text2);margin-bottom:10px">' + p.description + '</p>' +
     filesHtml +
     '<div class="acard">' +
     '<div class="ac-ico">&#x1F680;</div>' +
     '<div class="ac-body">' +
-    '<div class="ac-title">Build image &rarr; Docker Hub &rarr; Azure Container Apps</div>' +
-    '<div class="ac-sub">Backend builds and deploys directly. No GitHub push needed.</div>' +
+    '<div class="ac-title">Build &rarr; Docker Hub &rarr; Run on VM</div>' +
+    '<div class="ac-sub">Backend SSHes into VM, builds image, pushes to Docker Hub, runs on a free port</div>' +
     '</div>' +
     '<button class="ac-btn" onclick="deployProject()">Deploy Now &rarr;</button>' +
-    '</div>' +
-    '</div></div>';
+    '</div></div></div>';
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
 }
@@ -486,14 +435,17 @@ function deployProject() {
   if (!currentProject) return;
   document.querySelectorAll('.ac-btn').forEach(function(b) { b.disabled = true; });
   setStep(4);
+
   var pid = addProgress([
-    { id: 'p1', label: 'Connecting to backend...' },
-    { id: 'p2', label: 'Building Docker image...' },
-    { id: 'p3', label: 'Pushing to Docker Hub...' },
-    { id: 'p4', label: 'Deploying to Azure Container Apps...' },
-    { id: 'p5', label: 'Getting live URL...' }
+    { id: 'p1', label: 'Copying files to VM via SSH...' },
+    { id: 'p2', label: 'Building Docker image on VM...' },
+    { id: 'p3', label: 'Pushing image to Docker Hub...' },
+    { id: 'p4', label: 'Finding free port on VM...' },
+    { id: 'p5', label: 'Running container on VM...' }
   ]);
+
   updateProg(pid, 'p1', 'spin');
+
   fetch(BACKEND + '/deploy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -511,16 +463,17 @@ function deployProject() {
     updateProg(pid, 'p5', 'done');
     setStep(6);
     addMsg('agent',
-      'Successfully deployed to Azure!\n\n' +
+      'Successfully deployed!\n\n' +
       'Docker image: ' + result.image + '\n' +
+      'Port: ' + result.hostPort + '\n' +
       'App URL: ' + result.appUrl + '\n\n' +
-      'Your app is live on Azure Container Apps!'
+      'Your app is live on Azure VM!'
     );
-    addToHistory(currentProject.projectName, currentProject.description, result.appUrl);
+    addToHistory(currentProject.projectName, result.appUrl);
     currentProject = null;
   })
   .catch(function(err) {
-    updateProg(pid, 'p4', 'fail');
+    updateProg(pid, 'p2', 'fail');
     addMsg('agent', 'Deploy failed: ' + err.message);
     setStep(1);
   });
@@ -530,13 +483,12 @@ function addProgress(steps) {
   var msgs = document.getElementById('msgs');
   var id = 'prog-' + Date.now();
   var div = document.createElement('div');
-  div.className = 'msg agent';
-  div.id = id;
+  div.className = 'msg agent'; div.id = id;
   var stepsHtml = '';
   for (var i = 0; i < steps.length; i++) {
     stepsHtml += '<div class="ps-item"><div class="ps-dot wait" id="' + id + '-' + steps[i].id + '">.</div><span>' + steps[i].label + '</span></div>';
   }
-  div.innerHTML = '<div class="av">&#x1F916;</div><div class="mb"><div class="mm"><span class="mn">AutoDeploy Agent</span><span>' + getTime() + '</span></div><div class="bbl"><div class="prog-box"><div class="prog-title">Deploying...</div>' + stepsHtml + '</div></div></div>';
+  div.innerHTML = '<div class="av">&#x1F916;</div><div class="mb"><div class="mm"><span class="mn">AutoDeploy Agent</span><span>' + getTime() + '</span></div><div class="bbl"><div class="prog-box"><div class="prog-title">&#x1F680; Deploying to VM...</div>' + stepsHtml + '</div></div></div>';
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
   return id;
@@ -565,18 +517,14 @@ function addTyping() {
   var msgs = document.getElementById('msgs');
   var id = 'ty-' + Date.now();
   var div = document.createElement('div');
-  div.className = 'msg agent';
-  div.id = id;
+  div.className = 'msg agent'; div.id = id;
   div.innerHTML = '<div class="av">&#x1F916;</div><div class="mb"><div class="mm"><span class="mn">AutoDeploy Agent</span></div><div class="bbl"><div class="typing"><span></span><span></span><span></span></div></div></div>';
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
   return id;
 }
 
-function removeTyping(id) {
-  var el = document.getElementById(id);
-  if (el) el.remove();
-}
+function removeTyping(id) { var el = document.getElementById(id); if (el) el.remove(); }
 
 function doCopy(btn) {
   var pre = btn.closest('pre');
@@ -596,16 +544,11 @@ function fmt(t) {
   return t;
 }
 
-function esc(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function getTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
-function getTime() {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function addToHistory(name, desc, url) {
-  deployHistory.unshift({ name: name, desc: desc, url: url, ts: Date.now() });
+function addToHistory(name, url) {
+  deployHistory.unshift({ name: name, url: url, ts: Date.now() });
   if (deployHistory.length > 12) deployHistory = deployHistory.slice(0, 12);
   localStorage.setItem('ad_history', JSON.stringify(deployHistory));
   renderHistory();
@@ -620,9 +563,11 @@ function renderHistory() {
   var html = '';
   for (var i = 0; i < deployHistory.length; i++) {
     var h = deployHistory[i];
-    html += '<div class="dhi"><div class="dhi-name">' + h.name + '</div>' +
-      '<div class="dhi-meta"><span class="dhi-time">' + new Date(h.ts).toLocaleDateString() + '</span>' +
-      '<span class="dhi-badge">pushed</span></div></div>';
+    html += '<div class="dhi">' +
+      '<div class="dhi-name">&#x1F4E6; ' + h.name + '</div>' +
+      '<div class="dhi-meta"><span class="dhi-time">' + new Date(h.ts).toLocaleDateString() + '</span><span class="dhi-badge">live</span></div>' +
+      '<div class="dhi-url"><a href="' + h.url + '" target="_blank">' + h.url + '</a></div>' +
+      '</div>';
   }
   el.innerHTML = html;
 }
