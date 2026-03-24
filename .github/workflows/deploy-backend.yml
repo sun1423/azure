@@ -1,4 +1,4 @@
-name: Deploy Backend to Azure Container Apps
+name: Deploy Backend to VM
 
 on:
   push:
@@ -29,87 +29,36 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}
 
-      - name: Login to Azure
-        uses: azure/login@v2
+      - name: Deploy backend to VM via SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          host: ${{ secrets.VM_IP }}
+          username: ${{ secrets.VM_USERNAME }}
+          password: ${{ secrets.VM_PASSWORD }}
+          script: |
+            # Login to Docker Hub
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Install containerapp extension
-        run: az extension add --name containerapp --upgrade -y
+            # Pull latest backend image
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:latest
 
-      - name: Create backend if not exists
-        env:
-          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}
-        run: |
-          EXISTS=$(az containerapp show \
-            --name autodeploy-backend \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --query "name" -o tsv 2>/dev/null || echo "")
+            # Stop and remove old backend if running
+            docker stop autodeploy-backend 2>/dev/null || true
+            docker rm   autodeploy-backend 2>/dev/null || true
 
-          if [ -z "$EXISTS" ]; then
-            echo "First time — creating container app..."
-            az containerapp create \
+            # Run backend on configured port with all env vars
+            docker run -d \
               --name autodeploy-backend \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --environment ${{ secrets.ACA_ENVIRONMENT }} \
-              --image "$IMAGE" \
-              --target-port 8080 \
-              --ingress external \
-              --min-replicas 1 \
-              --max-replicas 3 \
-              --cpu 0.5 --memory 1.0Gi
-            echo "✅ Created"
-          else
-            echo "Already exists — skipping create"
-          fi
+              --restart unless-stopped \
+              -p ${{ secrets.BACKEND_PORT }}:9000 \
+              -e GEMINI_KEY="${{ secrets.GEMINI_KEY }}" \
+              -e DH_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}" \
+              -e DH_TOKEN="${{ secrets.DOCKERHUB_TOKEN }}" \
+              -e VM_IP="${{ secrets.VM_IP }}" \
+              -e VM_USERNAME="${{ secrets.VM_USERNAME }}" \
+              -e VM_PASSWORD="${{ secrets.VM_PASSWORD }}" \
+              ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:latest
 
-      - name: Set secrets on container app
-        run: |
-          az containerapp secret set \
-            --name autodeploy-backend \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --secrets \
-              gemini-key="${{ secrets.GEMINI_KEY }}" \
-              dh-username="${{ secrets.DOCKERHUB_USERNAME }}" \
-              dh-token="${{ secrets.DOCKERHUB_TOKEN }}" \
-              azure-rg="${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              aca-env="${{ secrets.ACA_ENVIRONMENT }}" \
-              acr-name="${{ secrets.ACR_NAME }}" \
-              azure-client-id="${{ secrets.AZURESUN_AZURE_CLIENT_ID }}" \
-              azure-client-secret="${{ secrets.AZURESUN_AZURE_CLIENT_SECRET }}" \
-              azure-tenant-id="${{ secrets.AZURESUN_AZURE_TENANT_ID }}" \
-              azure-sub-id="${{ secrets.AZURESUN_AZURE_SUBSCRIPTION_ID }}"
-
-      - name: Wire secrets to env vars
-        run: |
-          az containerapp update \
-            --name autodeploy-backend \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --set-env-vars \
-              GEMINI_KEY=secretref:gemini-key \
-              DH_USERNAME=secretref:dh-username \
-              DH_TOKEN=secretref:dh-token \
-              AZURE_RG=secretref:azure-rg \
-              ACA_ENV=secretref:aca-env \
-              ACR_NAME=secretref:acr-name \
-              AZURE_CLIENT_ID=secretref:azure-client-id \
-              AZURE_CLIENT_SECRET=secretref:azure-client-secret \
-              AZURE_TENANT_ID=secretref:azure-tenant-id \
-              AZURE_SUB_ID=secretref:azure-sub-id
-
-      - name: Update image only
-        run: |
-          az containerapp update \
-            --name autodeploy-backend \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}
-
-      - name: Print backend URL
-        run: |
-          URL=$(az containerapp show \
-            --name autodeploy-backend \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --query "properties.configuration.ingress.fqdn" -o tsv)
-          echo "======================================"
-          echo "✅ Backend URL: https://$URL"
-          echo "======================================"
+            echo "======================================"
+            echo "✅ Backend running at http://${{ secrets.VM_IP }}:${{ secrets.BACKEND_PORT }}"
+            echo "======================================"
