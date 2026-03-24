@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoDeploy Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0d0f14;
+    --surface:  #151820;
+    --border:   #1e2330;
+    --accent:   #00e5ff;
+    --accent2:  #7c3aed;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --mono:     'JetBrains Mono', monospace;
+    --sans:     'Syne', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .logo-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    background: var(--bg);
+    transition: border-color 0.2s;
+  }
+  .status-pill:hover { border-color: var(--accent); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .status-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.red   { background: var(--red); }
+  .btn-sm {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Main layout ── */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 220px;
+    border-right: 1px solid var(--border);
+    padding: 16px 12px;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  .sidebar-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    padding: 0 4px;
+  }
+  .quick-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: 2px;
+    line-height: 1.4;
+  }
+  .quick-btn:hover { background: var(--border); color: var(--text); }
+  .sidebar-section { margin-bottom: 20px; }
+
+  /* ── Chat area ── */
+  .chat-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-track { background: transparent; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Messages ── */
+  .msg { display: flex; gap: 12px; max-width: 860px; }
+  .msg.user { flex-direction: row-reverse; align-self: flex-end; }
+  .msg-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .msg.user   .msg-avatar { background: var(--accent2); }
+  .msg.agent  .msg-avatar { background: var(--border); }
+  .msg-body {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 1.65;
+    max-width: 700px;
+  }
+  .msg.user .msg-body {
+    background: var(--accent2);
+    border-color: var(--accent2);
+  }
+
+  /* ── File tabs ── */
+  .file-tabs { margin-top: 14px; }
+  .tab-bar {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  .tab {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 12px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    border-radius: 4px 4px 0 0;
+    transition: all 0.15s;
+  }
+  .tab.active { background: var(--border); color: var(--text); }
+  .tab-content {
+    display: none;
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+  }
+  .tab-content.active { display: block; }
+  .tab-content pre {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 14px 16px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #a8d8b9;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* ── Deploy button ── */
+  .deploy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 10px 20px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .deploy-btn:hover { background: #00b8d4; transform: translateY(-1px); }
+  .deploy-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ── Progress steps ── */
+  .progress-steps { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .step.done  { color: var(--green); }
+  .step.error { color: var(--red); }
+  .step.active { color: var(--accent); }
+  .step-icon { font-size: 14px; width: 18px; text-align: center; }
+
+  /* ── App result card ── */
+  .result-card {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: #0a1a10;
+    border: 1px solid #22c55e44;
+  }
+  .result-card .app-url {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .result-card .app-url:hover { text-decoration: underline; }
+  .result-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  /* ── Input bar ── */
+  .input-bar {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  .input-bar textarea {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    padding: 12px 16px;
+    resize: none;
+    min-height: 48px;
+    max-height: 160px;
+    line-height: 1.5;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-bar textarea:focus { border-color: var(--accent); }
+  .input-bar textarea::placeholder { color: var(--muted); }
+  .send-btn {
+    width: 46px;
+    height: 46px;
+    border-radius: 10px;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+  .send-btn:hover { background: #00b8d4; }
+  .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .send-btn svg { width: 18px; height: 18px; fill: #000; }
+
+  /* ── Modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    width: 420px;
+    max-width: 95vw;
+  }
+  .modal h2 { font-size: 18px; font-weight: 800; margin-bottom: 20px; }
+  .modal label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+  }
+  .modal input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 12px;
+    outline: none;
+    margin-bottom: 14px;
+    transition: border-color 0.2s;
+  }
+  .modal input:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 10px; margin-top: 4px; }
+  .btn-primary {
+    flex: 1;
+    padding: 10px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn-primary:hover { background: #00b8d4; }
+  .btn-cancel {
+    padding: 10px 16px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  /* ── Welcome ── */
+  .welcome {
+    max-width: 560px;
+    margin: auto;
+    text-align: center;
+    padding: 40px 20px;
+  }
+  .welcome h1 { font-size: 28px; font-weight: 800; margin-bottom: 10px; }
+  .welcome p  { color: var(--muted); font-size: 15px; line-height: 1.6; margin-bottom: 28px; }
+  .welcome-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 12px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  /* ── Apps panel ── */
+  .apps-panel {
+    width: 240px;
+    border-left: 1px solid var(--border);
+    padding: 16px 12px;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  .app-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .app-card .name { color: var(--text); font-weight: 600; margin-bottom: 3px; }
+  .app-card .ports { color: var(--accent); }
+  .app-card .status { color: var(--green); margin-top: 3px; }
+  .stop-btn {
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .stop-btn:hover { border-color: var(--red); color: var(--red); }
+
+  @media (max-width: 768px) {
+    .sidebar, .apps-panel { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    AutoDeploy Agent
+  </div>
+  <div class="header-right">
+    <div class="status-pill" id="statusPill" onclick="openModal()">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Not connected</span>
+    </div>
+    <button class="btn-sm" onclick="openModal()">⚙ Backend URL</button>
+    <button class="btn-sm" onclick="loadApps()">↻ Apps</button>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Quick deploy</div>
+      <button class="quick-btn" onclick="fillInput('Build a Flask REST API with /health and /time endpoints')">🐍 Flask REST API</button>
+      <button class="quick-btn" onclick="fillInput('Build a FastAPI app with /health endpoint and /echo POST endpoint')">⚡ FastAPI app</button>
+      <button class="quick-btn" onclick="fillInput('Build a Python web scraper API that accepts a URL and returns page title and meta description')">🕷 Web scraper API</button>
+      <button class="quick-btn" onclick="fillInput('Build a Python task queue API with /tasks GET and /tasks POST endpoints using in-memory storage')">📋 Task queue API</button>
+      <button class="quick-btn" onclick="fillInput('Build a Python webhook receiver that logs incoming POST requests and returns them on GET /logs')">🪝 Webhook receiver</button>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Utilities</div>
+      <button class="quick-btn" onclick="fillInput('check status')">🔍 Check status</button>
+      <button class="quick-btn" onclick="loadApps()">📦 List running apps</button>
+    </div>
+  </div>
+
+  <!-- Chat -->
+  <div class="chat-wrap">
+    <div class="chat-messages" id="messages">
+      <div class="welcome" id="welcome">
+        <h1>AutoDeploy Agent</h1>
+        <p>Describe what you want to build. The agent will generate the code, build a Docker image on your VM, push it to Docker Hub, and run it — all automatically.</p>
+        <div class="welcome-chips">
+          <span class="chip">🐳 Docker on Azure VM</span>
+          <span class="chip">🐙 Docker Hub</span>
+          <span class="chip">🤖 Gemini AI</span>
+          <span class="chip">🚀 Auto port assignment</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <textarea id="userInput" placeholder="Describe what to build and deploy..." rows="1"
+        onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+        <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Running apps panel -->
+  <div class="apps-panel">
+    <div class="sidebar-label">Running apps</div>
+    <div id="appsList"><div style="color:var(--muted);font-size:11px;font-family:var(--mono)">Click ↻ Apps to refresh</div></div>
+  </div>
+
+</div>
+
+<!-- Backend URL Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h2>Backend URL</h2>
+    <label>Backend URL</label>
+    <input type="text" id="backendInput" placeholder="http://YOUR_VM_IP:BACKEND_PORT">
+    <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:-8px;margin-bottom:14px;">
+      Enter your VM IP and the port the backend is running on (BACKEND_PORT secret).
+    </div>
+    <div class="modal-actions">
+      <button class="btn-primary" onclick="saveBackend()">Save & Test</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let BACKEND = localStorage.getItem('ad_backend') || '';
+let busy = false;
+
+// Always include ngrok header so ngrok free tier doesn't return HTML warning page
+var HEADERS = { 'ngrok-skip-browser-warning': '1', 'Content-Type': 'application/json' };
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+window.addEventListener('load', function() {
+  if (BACKEND) {
+    checkStatus();
+  }
+});
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+function openModal() {
+  document.getElementById('backendInput').value = BACKEND;
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+}
+function saveBackend() {
+  var val = document.getElementById('backendInput').value.trim().replace(/\/$/, '');
+  if (!val) return;
+  BACKEND = val;
+  localStorage.setItem('ad_backend', BACKEND);
+  closeModal();
+  checkStatus();
+}
+
+// ── Status check ──────────────────────────────────────────────────────────────
+function checkStatus() {
+  var dot  = document.getElementById('statusDot');
+  var text = document.getElementById('statusText');
+  dot.className  = 'status-dot';
+  text.textContent = 'Checking...';
+  fetch(BACKEND + '/health', { headers: HEADERS })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var ok = d.gemini && d.docker && d.vm;
+      dot.className    = 'status-dot ' + (ok ? 'green' : 'red');
+      text.textContent = ok
+        ? 'All systems ready'
+        : ('Missing: ' + [!d.gemini?'Gemini':'', !d.docker?'Docker':'', !d.vm?'VM':''].filter(Boolean).join(', '));
+      if (!ok) showToast('Some credentials missing — check backend env vars');
+    })
+    .catch(function() {
+      dot.className    = 'status-dot red';
+      text.textContent = 'Cannot reach backend';
+    });
+}
+
+// ── Input helpers ─────────────────────────────────────────────────────────────
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+function fillInput(text) {
+  var el = document.getElementById('userInput');
+  el.value = text;
+  autoResize(el);
+  el.focus();
+}
+
+// ── Send message ──────────────────────────────────────────────────────────────
+function sendMessage() {
+  var input = document.getElementById('userInput');
+  var text  = input.value.trim();
+  if (!text || busy) return;
+  if (!BACKEND) { openModal(); return; }
+
+  hideWelcome();
+  addMsg('user', text);
+  input.value = '';
+  input.style.height = 'auto';
+  setBusy(true);
+
+  // Special commands
+  if (text.toLowerCase().includes('check status') || text.toLowerCase().includes('status')) {
+    checkStatus();
+    addAgentMsg('Checking backend status...');
+    fetch(BACKEND + '/health', { headers: HEADERS })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var lines = [
+          (d.gemini ? '✅' : '❌') + ' Gemini AI',
+          (d.docker ? '✅' : '❌') + ' Docker Hub',
+          (d.vm     ? '✅' : '❌') + ' VM credentials',
+          (d.vm_reachable ? '✅' : '⚠️') + ' VM reachable' + (d.vm_error ? ': ' + d.vm_error : ''),
+        ];
+        updateLastAgentMsg(lines.join('<br>'));
+        setBusy(false);
+      })
+      .catch(function(e) { updateLastAgentMsg('❌ ' + e.message); setBusy(false); });
+    return;
+  }
+
+  // Deploy flow
+  var thinkId = addAgentMsg('🤖 Generating code with Gemini AI...');
+
+  fetch(BACKEND + '/deploy', {
+    method: 'POST',
+    headers: HEADERS,
+    body: JSON.stringify({ requirement: text }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (!data.success) {
+      updateMsg(thinkId, '❌ Deploy failed: ' + data.error);
+      setBusy(false);
+      return;
+    }
+    // Show generated files
+    var filesHtml = buildFileTabs(data.files);
+    // Show result
+    var resultHtml =
+      '<div>' +
+      '<b>' + data.app_name + '</b> deployed successfully!<br>' +
+      '<div style="margin:10px 0">' + filesHtml + '</div>' +
+      '<div class="progress-steps">' +
+        '<div class="step done"><span class="step-icon">✅</span> Code generated by Gemini</div>' +
+        '<div class="step done"><span class="step-icon">✅</span> Docker image built on VM</div>' +
+        '<div class="step done"><span class="step-icon">✅</span> Pushed to Docker Hub: ' + data.image + '</div>' +
+        '<div class="step done"><span class="step-icon">✅</span> Running on VM port ' + data.host_port + '</div>' +
+      '</div>' +
+      '<div class="result-card">' +
+        '<div>🚀 App is live at:</div>' +
+        '<a class="app-url" href="' + data.url + '" target="_blank">' + data.url + '</a>' +
+        '<div class="result-meta">Image: ' + data.image + '</div>' +
+      '</div>' +
+      '</div>';
+    updateMsg(thinkId, resultHtml);
+    loadApps();
+    setBusy(false);
+  })
+  .catch(function(e) {
+    updateMsg(thinkId, '❌ Error: ' + e.message + '<br>Make sure your backend is running at: ' + BACKEND);
+    setBusy(false);
+  });
+}
+
+// ── File tabs ─────────────────────────────────────────────────────────────────
+function buildFileTabs(files) {
+  var id = 'tabs-' + Date.now();
+  var names = Object.keys(files);
+  var tabs = names.map(function(n, i) {
+    return '<button class="tab' + (i===0?' active':'') + '" onclick="switchTab(\'' + id + '\',\'' + n + '\')" id="' + id + '-tab-' + n.replace('.','_') + '">' + n + '</button>';
+  }).join('');
+  var contents = names.map(function(n, i) {
+    return '<div class="tab-content' + (i===0?' active':'') + '" id="' + id + '-' + n.replace('.','_') + '"><pre>' + escapeHtml(files[n]) + '</pre></div>';
+  }).join('');
+  return '<div class="file-tabs"><div class="tab-bar">' + tabs + '</div>' + contents + '</div>';
+}
+function switchTab(containerId, fileName) {
+  var safeId = fileName.replace('.','_');
+  // Hide all tab contents in this container
+  var allContents = document.querySelectorAll('[id^="' + containerId + '-"]');
+  allContents.forEach(function(el) {
+    if (el.classList.contains('tab-content')) el.classList.remove('active');
+  });
+  var allTabs = document.querySelectorAll('[id^="' + containerId + '-tab-"]');
+  allTabs.forEach(function(el) { el.classList.remove('active'); });
+  // Activate selected
+  var content = document.getElementById(containerId + '-' + safeId);
+  var tab     = document.getElementById(containerId + '-tab-' + safeId);
+  if (content) content.classList.add('active');
+  if (tab)     tab.classList.add('active');
+}
+
+// ── Apps panel ────────────────────────────────────────────────────────────────
+function loadApps() {
+  if (!BACKEND) return;
+  fetch(BACKEND + '/apps', { headers: HEADERS })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var el = document.getElementById('appsList');
+      if (!d.apps || d.apps.length === 0) {
+        el.innerHTML = '<div style="color:var(--muted);font-size:11px;font-family:var(--mono)">No running containers</div>';
+        return;
+      }
+      el.innerHTML = d.apps.map(function(a) {
+        return '<div class="app-card">' +
+          '<div class="name">' + a.name + '</div>' +
+          '<div class="ports">' + (a.ports || '—') + '</div>' +
+          '<div class="status">' + a.status + '</div>' +
+          '<button class="stop-btn" onclick="stopApp(\'' + a.name + '\')">■ Stop</button>' +
+        '</div>';
+      }).join('');
+    })
+    .catch(function() {});
+}
+function stopApp(name) {
+  if (!confirm('Stop ' + name + '?')) return;
+  fetch(BACKEND + '/apps/' + name, { method: 'DELETE', headers: HEADERS })
+    .then(function() { loadApps(); })
+    .catch(function() {});
+}
+
+// ── Message helpers ───────────────────────────────────────────────────────────
+var msgCounter = 0;
+function hideWelcome() {
+  var w = document.getElementById('welcome');
+  if (w) w.style.display = 'none';
+}
+function addMsg(role, html) {
+  var id   = 'msg-' + (++msgCounter);
+  var icon = role === 'user' ? '👤' : '🤖';
+  var div  = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.id = id;
+  div.innerHTML =
+    '<div class="msg-avatar">' + icon + '</div>' +
+    '<div class="msg-body" id="' + id + '-body">' + html + '</div>';
+  document.getElementById('messages').appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  return id;
+}
+function addAgentMsg(html) { return addMsg('agent', html); }
+function updateMsg(id, html) {
+  var el = document.getElementById(id + '-body');
+  if (el) el.innerHTML = html;
+  var div = document.getElementById(id);
+  if (div) div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+function updateLastAgentMsg(html) {
+  // Update last agent message body
+  var msgs = document.querySelectorAll('.msg.agent .msg-body');
+  if (msgs.length > 0) msgs[msgs.length-1].innerHTML = html;
+}
+function setBusy(b) {
+  busy = b;
+  document.getElementById('sendBtn').disabled = b;
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+function showToast(msg) {
+  console.warn(msg);
+}
+</script>
+</body>
+</html>
