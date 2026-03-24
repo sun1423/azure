@@ -49,46 +49,54 @@ jobs:
               --name autodeploy-backend \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
               --yes
-            echo "Waiting for deletion to complete..."
             for i in $(seq 1 20); do
-              STILL_EXISTS=$(az containerapp show \
+              STILL=$(az containerapp show \
                 --name autodeploy-backend \
                 --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
                 --query "name" -o tsv 2>/dev/null || echo "")
-              if [ -z "$STILL_EXISTS" ]; then
-                echo "Deletion confirmed after ${i} checks"
+              if [ -z "$STILL" ]; then
+                echo "Deleted after $i checks"
                 break
               fi
-              echo "Still deleting... attempt $i/20"
+              echo "Waiting... $i/20"
               sleep 10
             done
           fi
 
-      - name: Create fresh backend
+      - name: Create backend with secrets
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          DH_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          AZURE_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          ACA_ENV: ${{ secrets.ACA_ENVIRONMENT }}
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURESUN_AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURESUN_AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURESUN_AZURE_TENANT_ID }}
+          AZURE_SUB_ID: ${{ secrets.AZURESUN_AZURE_SUBSCRIPTION_ID }}
         run: |
           az containerapp create \
             --name autodeploy-backend \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --environment ${{ secrets.ACA_ENVIRONMENT }} \
-            --image ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }} \
+            --resource-group "$AZURE_RG" \
+            --environment "$ACA_ENV" \
+            --image "$DH_USERNAME/autodeploy-backend:${{ github.sha }}" \
             --target-port 8080 \
             --ingress external \
             --min-replicas 1 \
             --max-replicas 3 \
             --cpu 0.5 --memory 1.0Gi \
             --env-vars \
-              "GEMINI_KEY=${{ secrets.GEMINI_KEY }}" \
-              "DH_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}" \
-              "DH_TOKEN=${{ secrets.DOCKERHUB_TOKEN }}" \
-              "AZURE_RG=${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              "ACA_ENV=${{ secrets.ACA_ENVIRONMENT }}" \
-              "ACR_NAME=${{ secrets.ACR_NAME }}" \
-              "AZURE_CLIENT_ID=${{ secrets.AZURESUN_AZURE_CLIENT_ID }}" \
-              "AZURE_CLIENT_SECRET=${{ secrets.AZURESUN_AZURE_CLIENT_SECRET }}" \
-              "AZURE_TENANT_ID=${{ secrets.AZURESUN_AZURE_TENANT_ID }}" \
-              "AZURE_SUB_ID=${{ secrets.AZURESUN_AZURE_SUBSCRIPTION_ID }}" \
-            2>&1
-          echo "Exit code: $?"
+              "GEMINI_KEY=$GEMINI_KEY" \
+              "DH_USERNAME=$DH_USERNAME" \
+              "DH_TOKEN=$DH_TOKEN" \
+              "AZURE_RG=$AZURE_RG" \
+              "ACA_ENV=$ACA_ENV" \
+              "ACR_NAME=$ACR_NAME" \
+              "AZURE_CLIENT_ID=$AZURE_CLIENT_ID" \
+              "AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET" \
+              "AZURE_TENANT_ID=$AZURE_TENANT_ID" \
+              "AZURE_SUB_ID=$AZURE_SUB_ID"
 
       - name: Print backend URL
         run: |
