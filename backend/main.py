@@ -1,4 +1,3 @@
-# var
 import os
 import json
 import uuid
@@ -23,7 +22,7 @@ app.add_middleware(
 )
 
 # ── Env vars set by deploy-backend.yml ──────────────────────────────────────
-GEMINI_KEY   = os.getenv("GEMINI_KEY", "")
+GROQ_KEY     = os.getenv("GROQ_KEY", "")
 DH_USER      = os.getenv("DH_USERNAME", "")
 DH_TOKEN     = os.getenv("DH_TOKEN", "")
 VM_IP        = os.getenv("VM_IP", "")
@@ -65,17 +64,24 @@ def find_free_port(client: paramiko.SSHClient) -> int:
     raise RuntimeError("No free ports available in range 8100-8999")
 
 
-def call_gemini(system_prompt: str, user_msg: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
-    body = {
-        "system_instruction": {"parts": [{"text": system_prompt}]},
-        "contents": [{"parts": [{"text": user_msg}]}],
-        "generationConfig": {"temperature": 0.2},
+def call_ai(system_prompt: str, user_msg: str) -> str:
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_KEY}",
+        "Content-Type": "application/json",
     }
-    r = requests.post(url, json=body, timeout=60)
+    body = {
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_msg},
+        ],
+    }
+    r = requests.post(url, json=body, headers=headers, timeout=60)
     r.raise_for_status()
     data = r.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    return data["choices"][0]["message"]["content"]
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -84,7 +90,7 @@ def call_gemini(system_prompt: str, user_msg: str) -> str:
 def health():
     status = {
         "status": "ok",
-        "gemini": bool(GEMINI_KEY),
+        "groq": bool(GROQ_KEY),
         "docker": bool(DH_USER and DH_TOKEN),
         "vm": bool(VM_IP and VM_USER and VM_PASS),
     }
@@ -131,7 +137,7 @@ def deploy(req: DeployRequest):
     """)
 
     try:
-        raw = call_gemini(system_prompt, requirement)
+        raw = call_ai(system_prompt, requirement)
         # Strip potential markdown fences
         raw = raw.strip()
         if raw.startswith("```"):
