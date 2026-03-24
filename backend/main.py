@@ -1,18 +1,14 @@
-#var
 import os
 import json
-import uuid
-import socket
-import subprocess
+import re
 import tempfile
-import textwrap
-import requests
 import paramiko
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI()
+app = FastAPI(title="AutoDeploy Agent Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,245 +18,278 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Env vars set by deploy-backend.yml ──────────────────────────────────────
-GROQ_KEY     = os.getenv("GROQ_KEY", "")
-DH_USER      = os.getenv("DH_USERNAME", "")
-DH_TOKEN     = os.getenv("DH_TOKEN", "")
-VM_IP        = os.getenv("VM_IP", "")
-VM_USER      = os.getenv("VM_USERNAME", "")
-VM_PASS      = os.getenv("VM_PASSWORD", "")
-# ────────────────────────────────────────────────────────────────────────────
+# ── Environment variables ──────────────────────────────────────────────────────
+GROQ_KEY     = os.environ.get("GROQ_KEY", "")
+DH_USERNAME  = os.environ.get("DH_USERNAME", "")
+DH_TOKEN     = os.environ.get("DH_TOKEN", "")
+VM_IP        = os.environ.get("VM_IP", "")
+VM_USERNAME  = os.environ.get("VM_USERNAME", "")
+VM_PASSWORD  = os.environ.get("VM_PASSWORD", "")
+
+GROQ_MODEL   = "llama-3.3-70b-versatile"
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def ssh_run(client: paramiko.SSHClient, cmd: str) -> tuple[str, str, int]:
-    """Run a command over SSH, return stdout, stderr, exit_code."""
-    stdin, stdout, stderr = client.exec_command(cmd, timeout=300)
-    out = stdout.read().decode("utf-8", errors="replace").strip()
-    err = stderr.read().decode("utf-8", errors="replace").strip()
-    code = stdout.channel.recv_exit_status()
-    return out, err, code
-
-
-def get_ssh_client() -> paramiko.SSHClient:
+# ── SSH helper ─────────────────────────────────────────────────────────────────
+def ssh_run(commands: list[str]) -> str:
+    """Connect to VM via SSH and run commands. Returns combined output."""
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        hostname=VM_IP,
-        username=VM_USER,
-        password=VM_PASS,
-        timeout=30,
-    )
-    return client
-
-
-def find_free_port(client: paramiko.SSHClient) -> int:
-    """Find a free port on the VM between 8100-8999."""
-    out, _, _ = ssh_run(client, "ss -tlnp | awk '{print $4}' | grep -oE '[0-9]+$' | sort -n")
-    used = set(int(p) for p in out.splitlines() if p.isdigit())
-    for port in range(8100, 8999):
-        if port not in used:
-            return port
-    raise RuntimeError("No free ports available in range 8100-8999")
-
-
-def call_ai(system_prompt: str, user_msg: str) -> str:
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROQ_KEY}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": "llama-3.3-70b-versatile",
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_msg},
-        ],
-    }
-    r = requests.post(url, json=body, headers=headers, timeout=60)
-    r.raise_for_status()
-    data = r.json()
-    return data["choices"][0]["message"]["content"]
-
-
-# ── Routes ───────────────────────────────────────────────────────────────────
-
-@app.get("/health")
-def health():
-    status = {
-        "status": "ok",
-        "groq": bool(GROQ_KEY),
-        "docker": bool(DH_USER and DH_TOKEN),
-        "vm": bool(VM_IP and VM_USER and VM_PASS),
-    }
-    # Quick SSH reachability check
-    if status["vm"]:
-        try:
-            c = get_ssh_client()
-            c.close()
-            status["vm_reachable"] = True
-        except Exception as e:
-            status["vm_reachable"] = False
-            status["vm_error"] = str(e)
-    return status
-
-
-class DeployRequest(BaseModel):
-    requirement: str
-
-
-@app.post("/deploy")
-def deploy(req: DeployRequest):
-    requirement = req.requirement.strip()
-    if not requirement:
-        return {"success": False, "error": "Requirement is empty"}
-
-    # ── 1. Generate code with Gemini ─────────────────────────────────────────
-    system_prompt = textwrap.dedent("""
-        You are an expert Python developer. Given a requirement, generate a complete
-        deployable Python application. Respond with ONLY valid JSON, no markdown, no
-        backticks. The JSON must have these keys:
-          - app_name: lowercase, hyphens only, max 20 chars (e.g. "flask-api")
-          - description: one sentence
-          - main_py: full content of main.py
-          - requirements_txt: content of requirements.txt (one package per line)
-          - dockerfile: content of Dockerfile
-          - port: integer port the app listens on inside the container (e.g. 8080)
-        
-        Rules:
-        - Use Flask or FastAPI for web apps
-        - The app must bind to 0.0.0.0 and use the port in the Dockerfile EXPOSE
-        - Dockerfile must use python:3.11-slim base image
-        - Include a /health endpoint that returns {"status": "ok"}
-        - Keep the app simple and functional
-    """)
-
     try:
-        raw = call_ai(system_prompt, requirement)
-        # Strip potential markdown fences
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1]
-            raw = raw.rsplit("```", 1)[0]
-        generated = json.loads(raw)
-    except Exception as e:
-        return {"success": False, "error": f"AI generation failed: {e}"}
-
-    app_name        = generated.get("app_name", "myapp")
-    main_py         = generated.get("main_py", "")
-    requirements    = generated.get("requirements_txt", "")
-    dockerfile      = generated.get("dockerfile", "")
-    container_port  = int(generated.get("port", 8080))
-
-    if not (main_py and requirements and dockerfile):
-        return {"success": False, "error": "AI did not return complete files"}
-
-    # ── 2. SSH into VM ───────────────────────────────────────────────────────
-    try:
-        client = get_ssh_client()
-    except Exception as e:
-        return {"success": False, "error": f"SSH connection failed: {e}"}
-
-    try:
-        build_id  = uuid.uuid4().hex[:8]
-        image_tag = f"{DH_USER}/{app_name}:{build_id}"
-        work_dir  = f"/tmp/build-{build_id}"
-
-        # ── 3. Upload files to VM ─────────────────────────────────────────
-        sftp = client.open_sftp()
-        sftp.mkdir(work_dir)
-        for fname, content in [
-            (f"{work_dir}/main.py",           main_py),
-            (f"{work_dir}/requirements.txt",  requirements),
-            (f"{work_dir}/Dockerfile",         dockerfile),
-        ]:
-            with sftp.open(fname, "w") as f:
-                f.write(content)
-        sftp.close()
-
-        # ── 4. Build Docker image on VM ───────────────────────────────────
-        out, err, code = ssh_run(client, f"docker build -t {image_tag} {work_dir}")
-        if code != 0:
-            return {"success": False, "error": f"Docker build failed: {err or out}"}
-
-        # ── 5. Push to Docker Hub ─────────────────────────────────────────
-        out, err, code = ssh_run(
-            client,
-            f"echo '{DH_TOKEN}' | docker login --username '{DH_USER}' --password-stdin && "
-            f"docker push {image_tag}"
+        client.connect(
+            hostname=VM_IP,
+            username=VM_USERNAME,
+            password=VM_PASSWORD,
+            timeout=30
         )
-        if code != 0:
-            return {"success": False, "error": f"Docker push failed: {err or out}"}
-
-        # ── 6. Find free port & run container ─────────────────────────────
-        host_port = find_free_port(client)
-        out, err, code = ssh_run(
-            client,
-            f"docker run -d --name {app_name}-{build_id} "
-            f"-p {host_port}:{container_port} "
-            f"--restart unless-stopped {image_tag}"
-        )
-        if code != 0:
-            return {"success": False, "error": f"Docker run failed: {err or out}"}
-
-        # ── 7. Cleanup build dir ──────────────────────────────────────────
-        ssh_run(client, f"rm -rf {work_dir}")
-
-        app_url = f"http://{VM_IP}:{host_port}"
-        return {
-            "success":      True,
-            "app_name":     app_name,
-            "image":        image_tag,
-            "url":          app_url,
-            "host_port":    host_port,
-            "files": {
-                "main.py":          main_py,
-                "requirements.txt": requirements,
-                "Dockerfile":       dockerfile,
-            },
-        }
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+        output = []
+        for cmd in commands:
+            stdin, stdout, stderr = client.exec_command(cmd, timeout=300)
+            out = stdout.read().decode().strip()
+            err = stderr.read().decode().strip()
+            exit_code = stdout.channel.recv_exit_status()
+            if exit_code != 0:
+                raise Exception(f"Command failed: {cmd}\nError: {err}")
+            if out:
+                output.append(out)
+        return "\n".join(output)
     finally:
         client.close()
 
 
-@app.get("/apps")
-def list_apps():
-    """List running containers on the VM."""
+def ssh_copy_files(files: dict, remote_dir: str):
+    """Copy project files to VM via SFTP."""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        client = get_ssh_client()
-        out, err, code = ssh_run(
-            client,
-            "docker ps --format '{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}'"
+        client.connect(
+            hostname=VM_IP,
+            username=VM_USERNAME,
+            password=VM_PASSWORD,
+            timeout=30
         )
+        sftp = client.open_sftp()
+
+        # Create remote directory
+        try:
+            sftp.mkdir(remote_dir)
+        except Exception:
+            pass  # already exists
+
+        # Upload each file
+        for filename, content in files.items():
+            remote_path = f"{remote_dir}/{filename}"
+            with sftp.file(remote_path, 'w') as f:
+                f.write(content)
+
+        sftp.close()
+    finally:
         client.close()
-        apps = []
-        for line in out.splitlines():
-            if "|" in line:
-                parts = line.split("|")
-                apps.append({
-                    "name":   parts[0],
-                    "image":  parts[1],
-                    "ports":  parts[2],
-                    "status": parts[3],
-                })
-        return {"apps": apps}
-    except Exception as e:
-        return {"apps": [], "error": str(e)}
 
 
-@app.delete("/apps/{container_name}")
-def stop_app(container_name: str):
-    """Stop and remove a container on the VM."""
+def find_free_port() -> int:
+    """Find a free port on the VM between 8100-8999."""
     try:
-        client = get_ssh_client()
-        ssh_run(client, f"docker stop {container_name}")
-        ssh_run(client, f"docker rm {container_name}")
-        client.close()
-        return {"success": True}
+        result = ssh_run([
+            "ss -tlnp | awk '{print $4}' | grep -oP ':\\K[0-9]+' | sort -n | uniq"
+        ])
+        used_ports = set(int(p) for p in result.split('\n') if p.isdigit())
+        for port in range(8100, 9000):
+            if port not in used_ports:
+                return port
+        raise Exception("No free ports available in range 8100-8999")
+    except Exception:
+        return 8100  # fallback
+
+
+# ── Request models ─────────────────────────────────────────────────────────────
+class GenerateRequest(BaseModel):
+    requirement: str
+
+class DeployRequest(BaseModel):
+    project: dict
+
+
+# ── Health ─────────────────────────────────────────────────────────────────────
+@app.get("/")
+@app.get("/health")
+def health():
+    return {
+        "status":  "ok",
+        "groq":    bool(GROQ_KEY),
+        "docker":  bool(DH_USERNAME and DH_TOKEN),
+        "vm":      bool(VM_IP and VM_USERNAME and VM_PASSWORD),
+    }
+
+
+# ── Status ─────────────────────────────────────────────────────────────────────
+@app.get("/status")
+async def status():
+    results = {}
+
+    # Groq
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_KEY}"},
+                json={
+                    "model": GROQ_MODEL,
+                    "max_tokens": 5,
+                    "messages": [{"role": "user", "content": "say ok"}]
+                }
+            )
+        results["groq"] = "✅ Connected" if res.is_success else f"❌ Error {res.status_code}"
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        results["groq"] = f"❌ {str(e)}"
+
+    # Docker Hub
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.get(f"https://hub.docker.com/v2/users/{DH_USERNAME}/")
+        results["dockerhub"] = f"✅ Connected ({DH_USERNAME})" if res.status_code in [200, 401] else f"❌ {res.status_code}"
+    except Exception as e:
+        results["dockerhub"] = f"❌ {str(e)}"
+
+    # VM SSH
+    try:
+        out = ssh_run(["echo ok && docker --version"])
+        results["vm"] = f"✅ Connected ({VM_IP}) — {out.split(chr(10))[-1]}"
+    except Exception as e:
+        results["vm"] = f"❌ {str(e)[:80]}"
+
+    # Running containers
+    try:
+        containers = ssh_run([
+            "docker ps --format '{{.Names}} | {{.Ports}}' 2>/dev/null || echo 'none'"
+        ])
+        results["running_apps"] = containers if containers else "No containers running"
+    except Exception:
+        results["running_apps"] = "Could not check"
+
+    all_ok = all("✅" in str(results.get(k, "")) for k in ["groq", "dockerhub", "vm"])
+    results["overall"] = "✅ All systems ready! Type your requirement to deploy." if all_ok else "⚠️ Some issues found"
+
+    return results
+
+
+# ── Generate ───────────────────────────────────────────────────────────────────
+@app.post("/generate")
+async def generate(req: GenerateRequest):
+    if not GROQ_KEY:
+        raise HTTPException(500, "GROQ_KEY not configured")
+
+    system_prompt = """You are an autonomous DevOps coding agent. Generate a complete deployable Python project.
+
+Respond with ONLY valid JSON — no markdown fences, no extra text:
+{
+  "projectName": "lowercase-kebab-max-32-chars",
+  "description": "one line description",
+  "port": 8080,
+  "files": {
+    "main.py": "complete python code",
+    "requirements.txt": "one dependency per line",
+    "Dockerfile": "complete dockerfile"
+  },
+  "summary": "what was built"
+}
+
+Rules:
+- Python: production-ready, error handling, logging to stdout
+- Dockerfile: python:3.11-slim base, non-root user, EXPOSE port, CMD to run app
+- requirements.txt: all pip packages, one per line
+- projectName: lowercase letters, numbers, hyphens ONLY, max 32 chars
+- Default port: 8080 inside container (host port assigned dynamically)
+- Do NOT include GitHub Actions workflows"""
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_KEY}"},
+            json={
+                "model": GROQ_MODEL,
+                "temperature": 0.2,
+                "max_tokens": 4096,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": f"Requirement: {req.requirement}"}
+                ]
+            }
+        )
+
+    if not res.is_success:
+        raise HTTPException(500, f"Groq error: {res.text}")
+
+    text = res.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    text = re.sub(r'^```json\s*', '', text.strip())
+    text = re.sub(r'^```\s*', '', text)
+    text = re.sub(r'\s*```$', '', text).strip()
+
+    try:
+        return json.loads(text)
+    except Exception:
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            return json.loads(match.group(0))
+        raise HTTPException(500, "AI returned invalid JSON. Please try again.")
+
+
+# ── Deploy ─────────────────────────────────────────────────────────────────────
+@app.post("/deploy")
+async def deploy(req: DeployRequest):
+
+    # Validate config
+    if not all([VM_IP, VM_USERNAME, VM_PASSWORD]):
+        raise HTTPException(500, "VM credentials not configured (VM_IP, VM_USERNAME, VM_PASSWORD)")
+    if not all([DH_USERNAME, DH_TOKEN]):
+        raise HTTPException(500, "Docker Hub credentials not configured")
+
+    project      = req.project
+    project_name = project.get("projectName", "my-app")
+    files        = project.get("files", {})
+    container_port = project.get("port", 8080)
+    image_tag    = f"{DH_USERNAME}/{project_name}:latest"
+    remote_dir   = f"/tmp/{project_name}"
+
+    # Step 1: Copy files to VM
+    ssh_copy_files(files, remote_dir)
+
+    # Step 2: Build image on VM
+    ssh_run([
+        f"cd {remote_dir} && docker build -t {image_tag} ."
+    ])
+
+    # Step 3: Login to Docker Hub and push image
+    ssh_run([
+        f"echo '{DH_TOKEN}' | docker login -u '{DH_USERNAME}' --password-stdin",
+        f"docker push {image_tag}"
+    ])
+
+    # Step 4: Stop and remove old container if exists
+    try:
+        ssh_run([
+            f"docker stop {project_name} 2>/dev/null || true",
+            f"docker rm {project_name} 2>/dev/null || true"
+        ])
+    except Exception:
+        pass
+
+    # Step 5: Find free port and run container
+    host_port = find_free_port()
+    ssh_run([
+        f"docker pull {image_tag}",
+        f"docker run -d --name {project_name} --restart unless-stopped -p {host_port}:{container_port} {image_tag}"
+    ])
+
+    # Step 6: Cleanup temp files
+    try:
+        ssh_run([f"rm -rf {remote_dir}"])
+    except Exception:
+        pass
+
+    return {
+        "success":     True,
+        "projectName": project_name,
+        "image":       image_tag,
+        "hostPort":    host_port,
+        "appUrl":      f"http://{VM_IP}:{host_port}",
+    }
