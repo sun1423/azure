@@ -37,66 +37,72 @@ jobs:
       - name: Install containerapp extension
         run: az extension add --name containerapp --upgrade -y
 
-      - name: Delete old backend if exists
+      - name: Create backend if not exists
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}
         run: |
           EXISTS=$(az containerapp show \
             --name autodeploy-backend \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --query "name" -o tsv 2>/dev/null || echo "")
-          if [ -n "$EXISTS" ]; then
-            echo "Deleting old backend..."
-            az containerapp delete \
+
+          if [ -z "$EXISTS" ]; then
+            echo "First time — creating container app..."
+            az containerapp create \
               --name autodeploy-backend \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --yes
-            for i in $(seq 1 20); do
-              STILL=$(az containerapp show \
-                --name autodeploy-backend \
-                --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-                --query "name" -o tsv 2>/dev/null || echo "")
-              if [ -z "$STILL" ]; then
-                echo "Deleted after $i checks"
-                break
-              fi
-              echo "Waiting... $i/20"
-              sleep 10
-            done
+              --environment ${{ secrets.ACA_ENVIRONMENT }} \
+              --image "$IMAGE" \
+              --target-port 8080 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --cpu 0.5 --memory 1.0Gi
+            echo "✅ Created"
+          else
+            echo "Already exists — skipping create"
           fi
 
-      - name: Create backend with secrets
-        env:
-          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
-          DH_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          AZURE_RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          ACA_ENV: ${{ secrets.ACA_ENVIRONMENT }}
-          ACR_NAME: ${{ secrets.ACR_NAME }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURESUN_AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURESUN_AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURESUN_AZURE_TENANT_ID }}
-          AZURE_SUB_ID: ${{ secrets.AZURESUN_AZURE_SUBSCRIPTION_ID }}
+      - name: Set secrets on container app
         run: |
-          az containerapp create \
+          az containerapp secret set \
             --name autodeploy-backend \
-            --resource-group "$AZURE_RG" \
-            --environment "$ACA_ENV" \
-            --image "$DH_USERNAME/autodeploy-backend:${{ github.sha }}" \
-            --target-port 8080 \
-            --ingress external \
-            --min-replicas 1 \
-            --max-replicas 3 \
-            --cpu 0.5 --memory 1.0Gi \
-            --env-vars \
-              "GEMINI_KEY=$GEMINI_KEY" \
-              "DH_USERNAME=$DH_USERNAME" \
-              "DH_TOKEN=$DH_TOKEN" \
-              "AZURE_RG=$AZURE_RG" \
-              "ACA_ENV=$ACA_ENV" \
-              "ACR_NAME=$ACR_NAME" \
-              "AZURE_CLIENT_ID=$AZURE_CLIENT_ID" \
-              "AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET" \
-              "AZURE_TENANT_ID=$AZURE_TENANT_ID" \
-              "AZURE_SUB_ID=$AZURE_SUB_ID"
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --secrets \
+              gemini-key="${{ secrets.GEMINI_KEY }}" \
+              dh-username="${{ secrets.DOCKERHUB_USERNAME }}" \
+              dh-token="${{ secrets.DOCKERHUB_TOKEN }}" \
+              azure-rg="${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              aca-env="${{ secrets.ACA_ENVIRONMENT }}" \
+              acr-name="${{ secrets.ACR_NAME }}" \
+              azure-client-id="${{ secrets.AZURESUN_AZURE_CLIENT_ID }}" \
+              azure-client-secret="${{ secrets.AZURESUN_AZURE_CLIENT_SECRET }}" \
+              azure-tenant-id="${{ secrets.AZURESUN_AZURE_TENANT_ID }}" \
+              azure-sub-id="${{ secrets.AZURESUN_AZURE_SUBSCRIPTION_ID }}"
+
+      - name: Wire secrets to env vars
+        run: |
+          az containerapp update \
+            --name autodeploy-backend \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --set-env-vars \
+              GEMINI_KEY=secretref:gemini-key \
+              DH_USERNAME=secretref:dh-username \
+              DH_TOKEN=secretref:dh-token \
+              AZURE_RG=secretref:azure-rg \
+              ACA_ENV=secretref:aca-env \
+              ACR_NAME=secretref:acr-name \
+              AZURE_CLIENT_ID=secretref:azure-client-id \
+              AZURE_CLIENT_SECRET=secretref:azure-client-secret \
+              AZURE_TENANT_ID=secretref:azure-tenant-id \
+              AZURE_SUB_ID=secretref:azure-sub-id
+
+      - name: Update image only
+        run: |
+          az containerapp update \
+            --name autodeploy-backend \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/autodeploy-backend:${{ github.sha }}
 
       - name: Print backend URL
         run: |
