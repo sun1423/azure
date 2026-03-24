@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 import tempfile
 import subprocess
 import httpx
@@ -18,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Env vars (set via deploy-backend.yml → Azure Container Apps) ──────────────
+# ── Environment variables ──────────────────────────────────────────────────────
 GEMINI_KEY          = os.environ.get("GEMINI_KEY", "")
 DH_USERNAME         = os.environ.get("DH_USERNAME", "")
 DH_TOKEN            = os.environ.get("DH_TOKEN", "")
@@ -32,30 +33,48 @@ AZURE_SUB_ID        = os.environ.get("AZURE_SUB_ID", "")
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
-# ── Azure login helper ─────────────────────────────────────────────────────────
-def do_azure_login():
-    """Login to Azure using service principal credentials."""
-    if not all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]):
-        raise HTTPException(500, "Azure credentials missing: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET or AZURE_TENANT_ID not set")
 
-    login = subprocess.run([
+# ── Azure login ────────────────────────────────────────────────────────────────
+def do_azure_login():
+    """Try managed identity first, fall back to service principal."""
+
+    # Managed identity (preferred — no credentials needed)
+    r = subprocess.run(
+        ["az", "login", "--identity"],
+        capture_output=True, text=True
+    )
+    if r.returncode == 0:
+        print("Azure login via managed identity ✅")
+        if AZURE_SUB_ID:
+            subprocess.run(
+                ["az", "account", "set", "--subscription", AZURE_SUB_ID],
+                capture_output=True, text=True
+            )
+        return
+
+    # Service principal fallback
+    if not all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]):
+        raise HTTPException(500, "Azure login failed: no managed identity and service principal credentials missing")
+
+    r2 = subprocess.run([
         "az", "login", "--service-principal",
         "--username", AZURE_CLIENT_ID,
         "--password", AZURE_CLIENT_SECRET,
         "--tenant",   AZURE_TENANT_ID
     ], capture_output=True, text=True)
 
-    if login.returncode != 0:
-        raise HTTPException(500, f"Azure login failed: {login.stderr}")
+    if r2.returncode != 0:
+        raise HTTPException(500, f"Azure login failed: {r2.stderr}")
 
     if AZURE_SUB_ID:
-        subprocess.run([
-            "az", "account", "set",
-            "--subscription", AZURE_SUB_ID
-        ], capture_output=True, text=True)
+        subprocess.run(
+            ["az", "account", "set", "--subscription", AZURE_SUB_ID],
+            capture_output=True, text=True
+        )
+    print("Azure login via service principal ✅")
 
 
-# ── Models ─────────────────────────────────────────────────────────────────────
+# ── Request models ─────────────────────────────────────────────────────────────
 class GenerateRequest(BaseModel):
     requirement: str
 
@@ -68,11 +87,11 @@ class DeployRequest(BaseModel):
 @app.get("/health")
 def health():
     return {
-        "status":  "ok",
-        "gemini":  bool(GEMINI_KEY),
-        "docker":  bool(DH_USERNAME and DH_TOKEN),
-        "azure":   bool(AZURE_RG and ACA_ENV),
-        "acr":     bool(ACR_NAME),
+        "status":   "ok",
+        "gemini":   bool(GEMINI_KEY),
+        "docker":   bool(DH_USERNAME and DH_TOKEN),
+        "azure":    bool(AZURE_RG and ACA_ENV),
+        "acr":      bool(ACR_NAME),
         "az_creds": bool(AZURE_CLIENT_ID and AZURE_CLIENT_SECRET and AZURE_TENANT_ID),
     }
 
@@ -82,7 +101,7 @@ def health():
 async def status():
     results = {}
 
-    # Check Gemini
+    # Gemini
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.post(
@@ -92,24 +111,24 @@ async def status():
                     "generationConfig": {"maxOutputTokens": 5}
                 }
             )
-            results["gemini"] = "✅ Connected" if res.is_success else f"❌ Error {res.status_code}: {res.text[:100]}"
+        results["gemini"] = "✅ Connected" if res.is_success else f"❌ Error {res.status_code}"
     except Exception as e:
         results["gemini"] = f"❌ {str(e)}"
 
-    # Check Docker Hub
+    # Docker Hub
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.get(f"https://hub.docker.com/v2/users/{DH_USERNAME}/")
-            results["dockerhub"] = f"✅ Connected ({DH_USERNAME})" if res.status_code in [200, 401] else f"❌ Error {res.status_code}"
+        results["dockerhub"] = f"✅ Connected ({DH_USERNAME})" if res.status_code in [200, 401] else f"❌ {res.status_code}"
     except Exception as e:
         results["dockerhub"] = f"❌ {str(e)}"
 
-    results["azure_rg"]   = f"✅ {AZURE_RG}"  if AZURE_RG  else "❌ Not set"
-    results["azure_env"]  = f"✅ {ACA_ENV}"   if ACA_ENV   else "❌ Not set"
-    results["acr"]        = f"✅ {ACR_NAME}"  if ACR_NAME  else "❌ Not set"
-    results["az_creds"]   = "✅ Set" if all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]) else "❌ Missing"
+    results["azure_rg"]  = f"✅ {AZURE_RG}"  if AZURE_RG  else "❌ Not set"
+    results["azure_env"] = f"✅ {ACA_ENV}"   if ACA_ENV   else "❌ Not set"
+    results["acr"]       = f"✅ {ACR_NAME}"  if ACR_NAME  else "❌ Not set"
+    results["az_creds"]  = "✅ Set" if all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]) else "⚠️ Using managed identity"
 
-    # Try Azure login and list apps
+    # Azure CLI + list apps
     try:
         do_azure_login()
         apps = subprocess.run([
@@ -119,24 +138,19 @@ async def status():
             "-o", "json"
         ], capture_output=True, text=True, timeout=15)
 
-        if apps.returncode == 0:
-            app_list = json.loads(apps.stdout or "[]")
-            results["deployed_apps"] = app_list if app_list else "No apps deployed yet"
-            results["azure_cli"] = "✅ Logged in"
-        else:
-            results["azure_cli"] = "❌ Login failed"
-            results["deployed_apps"] = []
+        app_list = json.loads(apps.stdout or "[]") if apps.returncode == 0 else []
+        results["azure_cli"]     = "✅ Logged in"
+        results["deployed_apps"] = app_list if app_list else "No apps deployed yet"
     except Exception as e:
-        results["azure_cli"] = f"⚠️ {str(e)[:80]}"
-        results["deployed_apps"] = []
+        results["azure_cli"]     = f"⚠️ {str(e)[:80]}"
+        results["deployed_apps"] = "Login needed"
 
     all_ok = all([
         "✅" in str(results.get("gemini", "")),
         "✅" in str(results.get("dockerhub", "")),
         bool(AZURE_RG), bool(ACA_ENV), bool(ACR_NAME),
-        bool(AZURE_CLIENT_ID and AZURE_CLIENT_SECRET),
     ])
-    results["overall"] = "✅ All systems ready! Type your requirement to deploy." if all_ok else "⚠️ Some issues found — check above"
+    results["overall"] = "✅ All systems ready! Type your requirement to deploy." if all_ok else "⚠️ Some issues found"
 
     return results
 
@@ -147,28 +161,28 @@ async def generate(req: GenerateRequest):
     if not GEMINI_KEY:
         raise HTTPException(500, "GEMINI_KEY not configured")
 
-    system_prompt = f"""You are an autonomous DevOps coding agent. Generate a complete deployable Python project.
+    system_prompt = """You are an autonomous DevOps coding agent. Generate a complete deployable Python project.
 
-Respond with ONLY valid JSON — no markdown fences, no extra text outside the JSON:
-{{
-  "projectName": "lowercase-kebab-name-max-32-chars",
+Respond with ONLY valid JSON — no markdown fences, no extra text:
+{
+  "projectName": "lowercase-kebab-max-32-chars",
   "description": "one line description",
   "port": 8080,
-  "files": {{
+  "files": {
     "main.py": "complete python code",
     "requirements.txt": "one dependency per line",
     "Dockerfile": "complete dockerfile"
-  }},
-  "summary": "brief description of what was built"
-}}
+  },
+  "summary": "what was built"
+}
 
 Rules:
-- Python: production-ready, proper error handling, logging to stdout
-- Dockerfile: use python:3.11-slim as base, create non-root user, EXPOSE the correct port, CMD to run the app
-- requirements.txt: all pip packages needed, one per line
-- projectName: lowercase letters, numbers, hyphens ONLY, max 32 chars, no spaces
-- Port must match what the app listens on (use 8080 as default)
-- Do NOT include GitHub Actions workflows — deployment is handled by the backend"""
+- Python: production-ready, error handling, logging to stdout
+- Dockerfile: python:3.11-slim base, non-root user, EXPOSE port, CMD to run app
+- requirements.txt: all pip packages, one per line
+- projectName: lowercase letters, numbers, hyphens ONLY, max 32 chars
+- Default port: 8080
+- Do NOT include GitHub Actions workflows"""
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}"
 
@@ -183,35 +197,28 @@ Rules:
         raise HTTPException(500, f"Gemini error: {res.text}")
 
     text = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-    text = text.strip()
-    # Strip markdown fences if present
-    text = re.sub(r'^```json\s*', '', text)
+    text = re.sub(r'^```json\s*', '', text.strip())
     text = re.sub(r'^```\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
-    text = text.strip()
+    text = re.sub(r'\s*```$', '', text).strip()
 
     try:
-        project = json.loads(text)
+        return json.loads(text)
     except Exception:
         match = re.search(r'\{[\s\S]*\}', text)
         if match:
-            project = json.loads(match.group(0))
-        else:
-            raise HTTPException(500, "AI returned invalid JSON. Please try again.")
-
-    return project
+            return json.loads(match.group(0))
+        raise HTTPException(500, "AI returned invalid JSON. Please try again.")
 
 
 # ── Deploy ─────────────────────────────────────────────────────────────────────
 @app.post("/deploy")
 async def deploy(req: DeployRequest):
-    # Validate all required config
+
+    # Validate config
     if not ACR_NAME:
-        raise HTTPException(500, "ACR_NAME not configured")
+        raise HTTPException(500, "ACR_NAME not set")
     if not AZURE_RG or not ACA_ENV:
-        raise HTTPException(500, "AZURE_RG or ACA_ENV not configured")
-    if not all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]):
-        raise HTTPException(500, "Azure credentials not configured (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)")
+        raise HTTPException(500, "AZURE_RG or ACA_ENV not set")
 
     project      = req.project
     project_name = project.get("projectName", "my-app")
@@ -222,7 +229,7 @@ async def deploy(req: DeployRequest):
     # Step 1: Login to Azure
     do_azure_login()
 
-    # Step 2: Write files to temp dir and build via ACR Tasks
+    # Step 2: Write files and build via ACR Tasks
     with tempfile.TemporaryDirectory() as tmpdir:
         for filename, content in files.items():
             filepath = os.path.join(tmpdir, filename)
@@ -232,7 +239,6 @@ async def deploy(req: DeployRequest):
             with open(filepath, "w") as f:
                 f.write(content)
 
-        # Build image using ACR Tasks (runs in Azure cloud — no Docker daemon needed)
         build = subprocess.run([
             "az", "acr", "build",
             "--registry", ACR_NAME,
@@ -259,11 +265,12 @@ async def deploy(req: DeployRequest):
             "--resource-group", AZURE_RG,
             "--yes"
         ], capture_output=True, text=True)
+
         if delete.returncode != 0:
             raise HTTPException(500, f"Failed to delete old app: {delete.stderr}")
-        # Wait for deletion
-        import time
-        for _ in range(20):
+
+        # Wait until deletion confirmed (max 3 min)
+        for i in range(18):
             still = subprocess.run([
                 "az", "containerapp", "show",
                 "--name", project_name,
@@ -271,6 +278,7 @@ async def deploy(req: DeployRequest):
                 "--query", "name", "-o", "tsv"
             ], capture_output=True, text=True)
             if still.returncode != 0 or not still.stdout.strip():
+                print(f"Deletion confirmed after {i+1} checks")
                 break
             time.sleep(10)
 
@@ -291,10 +299,10 @@ async def deploy(req: DeployRequest):
     ], capture_output=True, text=True)
 
     if create.returncode != 0:
-        raise HTTPException(500, f"Azure deploy failed: {create.stderr}")
+        raise HTTPException(500, f"Deploy failed: {create.stderr}")
 
     # Step 5: Get app URL
-    url_result = subprocess.run([
+    url_res = subprocess.run([
         "az", "containerapp", "show",
         "--name", project_name,
         "--resource-group", AZURE_RG,
@@ -302,7 +310,7 @@ async def deploy(req: DeployRequest):
         "-o", "tsv"
     ], capture_output=True, text=True)
 
-    app_url = f"https://{url_result.stdout.strip()}" if url_result.stdout.strip() else "Check Azure Portal"
+    app_url = f"https://{url_res.stdout.strip()}" if url_res.stdout.strip() else "Check Azure Portal"
 
     return {
         "success":     True,
