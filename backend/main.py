@@ -7,9 +7,11 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from flask import Flask
+from flask_cors import CORS
 
 app = FastAPI(title="AutoDeploy Agent Backend")
-
+CORS(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
