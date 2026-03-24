@@ -257,13 +257,12 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
 </div>
 
 <script>
-  const API = "https://lustrelessly-conglutinative-jennefer.ngrok-free.dev";
+  fetch("https://lustrelessly-conglutinative-jennefer.ngrok-free.app/health")
+  .then(r => r.json())
+  .then(console.log)
+  .catch(console.error);
 
-fetch(`${API}/health`, {
-  headers: {
-    "ngrok-skip-browser-warning": "true"
-  }
-})
+  
   .then(res => res.json())
   .then(data => console.log(data))
   .catch(err => console.error(err));
