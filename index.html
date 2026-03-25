@@ -275,7 +275,7 @@ function init() {
 
 function checkHealth() {
   setStatus('checking', 'Connecting...');
-  fetch(BACKEND + '/health')
+  fetch(BACKEND + '/health', {headers: {'ngrok-skip-browser-warning': 'true'}})
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (d.status === 'ok') {
@@ -308,7 +308,7 @@ function saveUrl() {
     url = 'https://' + url;
   }
   n.className = 'notice ok'; n.textContent = 'Testing...';
-  fetch(url + '/health')
+  fetch(url + '/health', {headers: {'ngrok-skip-browser-warning': 'true'}})
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (d.status === 'ok') {
@@ -353,7 +353,7 @@ function sendMsg() {
   // Status check
   if (/status|check|health|all good|working|test/i.test(txt)) {
     var tid = addTyping();
-    fetch(BACKEND + '/status')
+    fetch(BACKEND + '/status', {headers: {'ngrok-skip-browser-warning': 'true'}})
       .then(function(r) { return r.json(); })
       .then(function(d) {
         removeTyping(tid);
@@ -378,7 +378,7 @@ function sendMsg() {
   var tid = addTyping();
   fetch(BACKEND + '/generate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify({ requirement: txt })
   })
   .then(function(r) {
@@ -452,7 +452,7 @@ function deployProject() {
 
   fetch(BACKEND + '/deploy', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify({ project: currentProject })
   })
   .then(function(r) {
