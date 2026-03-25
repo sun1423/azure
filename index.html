@@ -154,7 +154,7 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
     <div class="logo-icon">&#x1F916;</div>
     <div>
       <div class="logo-name"><em>Auto</em>Deploy Agent</div>
-      <div class="logo-tag">Groq Gemini &middot; Docker Hub &middot; Azure VMmiddot; Docker Hub Gemini &middot; Docker Hub &middot; Azure VMmiddot; Azure VM</div>
+      <div class="logo-tag">Groq Groq &middot; Docker Hub &middot; Azure VMmiddot; Docker Hub Groq &middot; Docker Hub &middot; Azure VMmiddot; Azure VM</div>
     </div>
   </div>
   <div class="hdr-r">
@@ -233,7 +233,7 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
       </div>
       <div class="inp-foot">
         <span><span class="kbd">Enter</span> send &middot; <span class="kbd">Shift+Enter</span> newline</span>
-        <span style="color:var(--text2)">Groq Gemini &rarr; Docker Hub &rarr; Azure VMrarr; Docker Hub Gemini &rarr; Docker Hub &rarr; Azure VMrarr; Azure VM</span>
+        <span style="color:var(--text2)">Groq Groq &rarr; Docker Hub &rarr; Azure VMrarr; Docker Hub Groq &rarr; Docker Hub &rarr; Azure VMrarr; Azure VM</span>
       </div>
     </div>
   </div>
@@ -245,8 +245,8 @@ body{font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--tex
     <p>Enter the URL of your AutoDeploy backend running on your Azure VM (port 9000).</p>
     <div class="mf">
       <label>Backend URL</label>
-      <input type="text" id="backendUrl" placeholder="http://YOUR_VM_IP:9000" />
-      <div class="hint">Your VM IP with port 9000 e.g. http://20.1.2.3:9000</div>
+      <input type="text" id="backendUrl" placeholder="https://xxx.ngrok-free.dev or http://IP:PORT" />
+      <div class="hint">e.g. https://xxx.ngrok-free.dev or http://20.1.2.3:9000</div>
     </div>
     <div id="cfgNotice"></div>
     <div class="mbtns">
@@ -303,6 +303,10 @@ function saveUrl() {
   var url = document.getElementById('backendUrl').value.trim().replace(/\/$/, '');
   var n = document.getElementById('cfgNotice');
   if (!url) { n.className = 'notice err'; n.textContent = 'Please enter backend URL.'; return; }
+  // Auto-add https:// if no protocol specified
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+  }
   n.className = 'notice ok'; n.textContent = 'Testing...';
   fetch(url + '/health')
     .then(function(r) { return r.json(); })
@@ -310,7 +314,7 @@ function saveUrl() {
       if (d.status === 'ok') {
         BACKEND = url;
         localStorage.setItem('ad_backend', url);
-        n.textContent = 'Connected! Gemini:' + d.gemini + ' Docker:' + d.docker + ' VM:' + d.vm;
+        n.textContent = 'Connected! Groq:' + d.groq + ' Docker:' + d.docker + ' VM:' + d.vm;
         checkHealth();
         setTimeout(closeModal, 1200);
       } else {
