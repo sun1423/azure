@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Alert Agent Simulation</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; line-height: 1.6; }
+        .dashboard { max-width: 800px; margin: auto; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }
+        h2 { margin: 0; color: #58a6ff; font-weight: 400; }
+        .btn { background: #238636; color: white; border: 1px solid rgba(240,246,252,0.1); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500; }
+        .btn:hover { background: #2ea043; }
+        .status-bar { font-size: 0.9em; margin-bottom: 15px; color: #8b949e; }
+        .pattern-card { background: #0d1117; border: 1px solid #30363d; border-left: 4px solid #58a6ff; padding: 15px; margin-bottom: 12px; border-radius: 4px; animation: fadeIn 0.5s ease; }
+        .tag { font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 4px; margin-right: 8px; text-transform: uppercase; }
+        .critical { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid #f85149; }
+        .warning { background: rgba(210,153,34,0.15); color: #d29922; border: 1px solid #d29922; }
+        .raw-container { margin-top: 30px; }
+        pre { background: #010409; padding: 15px; border-radius: 6px; font-size: 12px; overflow-x: auto; border: 1px solid #30363d; color: #7ee787; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="header">
+        <h2>Grafana Pattern Agent</h2>
+        <button class="btn" onclick="simulateAgent()">Start Weekly Analysis</button>
+    </div>
+
+    <div class="status-bar" id="status">Ready to fetch data...</div>
+
+    <div id="results" class="hidden">
+        <h4 style="margin-bottom: 10px;">AI Insight Summary</h4>
+        <div id="pattern-list"></div>
+
+        <div class="raw-container">
+            <h4 style="color: #8b949e;">Source: Alert State History (Last 7 Days)</h4>
+            <pre id="raw-json"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+    const mockData = [
+        { "timestamp": "2026-03-24T03:00:12Z", "alert": "Memory Leak", "node": "prod-web-01", "state": "firing" },
+        { "timestamp": "2026-03-24T03:05:45Z", "alert": "Memory Leak", "node": "prod-web-01", "state": "resolved" },
+        { "timestamp": "2026-03-25T03:00:08Z", "alert": "Memory Leak", "node": "prod-web-02", "state": "firing" },
+        { "timestamp": "2026-03-26T08:15:00Z", "alert": "High Latency", "node": "api-gateway", "state": "firing" },
+        { "timestamp": "2026-03-26T08:16:22Z", "alert": "High Latency", "node": "api-gateway", "state": "resolved" },
+        { "timestamp": "2026-03-26T08:17:10Z", "alert": "High Latency", "node": "api-gateway", "state": "firing" }
+    ];
+
+    function simulateAgent() {
+        const status = document.getElementById('status');
+        const results = document.getElementById('results');
+        const list = document.getElementById('pattern-list');
+        const raw = document.getElementById('raw-json');
+
+        results.classList.add('hidden');
+        list.innerHTML = '';
+        status.innerText = "Connecting to Grafana API...";
+
+        setTimeout(() => {
+            status.innerText = "Processing JSON with LLM Model...";
+            
+            setTimeout(() => {
+                status.innerText = "Analysis Complete.";
+                results.classList.remove('hidden');
+                raw.innerText = JSON.stringify(mockData, null, 2);
+
+                const insights = [
+                    { type: 'critical', title: 'Flapping Detected', text: 'Alert "High Latency" toggled 3 times in 2 minutes on api-gateway. Possible threshold jitter.' },
+                    { type: 'warning', title: 'Daily Pattern Found', text: 'Memory Leak alerts consistently trigger at 03:00 UTC. Investigate daily backup or cron job impacts.' },
+                    { type: 'warning', title: 'Node Distribution', text: 'Alerts are rotating across prod-web nodes. Check if load balancer is unevenly distributing traffic.' }
+                ];
+
+                insights.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'pattern-card';
+                    div.innerHTML = `<span class="tag ${item.type}">${item.type}</span><strong>${item.title}</strong><p style="margin: 8px 0 0; font-size: 0.95em; color: #8b949e;">${item.text}</p>`;
+                    list.appendChild(div);
+                });
+            }, 1200);
+        }, 800);
+    }
+</script>
+
+</body>
+</html>
