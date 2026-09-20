@@ -1,0 +1,19 @@
+name: Unzip
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          unzip -o india-news-hub.zip
+          cp -r india-news-hub/public india-news-hub/scripts .
+          rm -rf india-news-hub india-news-hub.zip
+          sed -i 's|^header{background|header{text-align:center;background|' public/index.html
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A
+          git commit -m "Extract site files"
+          git push
