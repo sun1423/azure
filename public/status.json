@@ -1,1 +1,11 @@
-{"updated":null,"fails":{}}
+{
+ "updated": "2026-10-01T08:38:00.604Z",
+ "fails": {
+  "https://www.dainiktribune.com": 1,
+  "https://www.loksatta.com": 1,
+  "https://www.prajasakti.com": 1,
+  "https://www.amarasom.in": 1,
+  "https://dainikasam.com": 1,
+  "https://www.pragnews.com": 1
+ }
+}
