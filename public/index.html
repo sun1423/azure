@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>All Language Indian Newspapers</title>
-<meta name="description" content="Indian newspapers, TV and digital news sites in every language, in one place.">
+<title>Local News Hub</title>
+<meta name="description" content="Local newspapers, TV and digital news sites selected automatically for your country.">
 <meta name="theme-color" content="#0f3d2e">
 <style>
 :root{--bg:#f3f5f2;--card:#fff;--ink:#14201a;--mute:#5d6b63;--line:#dfe5df;--accent:#0f3d2e;--chip:#e5ece6;color-scheme:light dark}
@@ -20,6 +20,8 @@ main{max-width:720px;margin:0 auto;padding:14px 14px 40px}
 .controls{position:sticky;top:0;z-index:5;background:var(--bg);padding:8px 0 10px;display:grid;gap:8px}
 select,input{width:100%;font:inherit;padding:13px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)}
 select:focus,input:focus,a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:520px){.row{grid-template-columns:1fr}}
 .chips{display:flex;gap:6px;overflow-x:auto}
 .chips button{flex:none;font:inherit;font-size:.85rem;padding:7px 13px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
 .chips button[aria-pressed=true]{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -37,12 +39,15 @@ footer{color:var(--mute);font-size:.78rem;text-align:center;padding:0 14px 24px}
 </head>
 <body>
 <header>
-  <h1>All Language Indian Newspapers</h1>
-  <p>Pick a language. Open any newspaper, TV or digital news site.</p>
+  <h1 id="title">Local News</h1>
+  <p id="subtitle">Finding news sources for your country…</p>
 </header>
 <main>
   <div class="controls">
-    <select id="lang" aria-label="Select language"><option value="">Select language</option></select>
+    <div class="row">
+      <select id="country" aria-label="Select country"><option value="">Detecting country…</option></select>
+      <select id="lang" aria-label="Select language"><option value="">Select language</option></select>
+    </div>
     <input id="q" type="search" placeholder="Search outlets" aria-label="Search outlets" hidden>
     <div class="chips" id="chips" hidden>
       <button data-t="" aria-pressed="true">All</button>
@@ -53,16 +58,39 @@ footer{color:var(--mute);font-size:.78rem;text-align:center;padding:0 14px 24px}
   </div>
   <div class="count" id="count"></div>
   <ul id="list"></ul>
-  <div class="empty" id="empty">Choose a language above to see its news outlets.</div>
+  <div class="empty" id="empty">Detecting your country…</div>
 </main>
 <footer id="foot"></footer>
 <script src="outlets.js"></script>
 <script>
 const TL={p:"Newspaper",t:"TV",d:"Digital"};
 const $=id=>document.getElementById(id);
-let DATA=[],FAILS={},type="";
-const host=u=>new URL(u).hostname.replace(/^www\./,"");
+let ROOT={},DATA=[],FAILS={},type="";
+const host=u=>{try{return new URL(u).hostname.replace(/^www\./,"")}catch{return u}};
 const store={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k,v){try{localStorage.setItem(k,v)}catch{}}};
+const displayCountry=code=>{try{return new Intl.DisplayNames([navigator.language||"en"],{type:"region"}).of(code)||code}catch{return code}};
+
+function setHeader(country){
+  const name=country?.name||"Local";
+  document.title=name+" News";
+  $("title").textContent=name+" News";
+  $("subtitle").textContent=country?.languages?.length>1
+    ? "Choose a language. Open a local newspaper, TV or digital news site."
+    : "Local newspaper, TV and digital news sources selected for "+name+".";
+}
+
+function fillLanguages(country,preferred=""){
+  const sel=$("lang");sel.innerHTML='<option value="">Select language</option>';
+  DATA=country?.languages||[];
+  for(const l of DATA){
+    const op=document.createElement("option");op.value=l.code;
+    op.textContent=l.name+(l.native&&l.native!==l.name?" – "+l.native:"");sel.append(op);
+  }
+  const wanted=preferred||store.get("lang:"+$("country").value);
+  if(wanted&&DATA.some(l=>l.code===wanted))sel.value=wanted;
+  else if(DATA.length===1)sel.value=DATA[0].code;
+  else if($("country").value==="IN"&&DATA.some(l=>l.code==="hi"))sel.value="hi";
+}
 
 function render(){
   const code=$("lang").value,list=$("list");
@@ -70,8 +98,9 @@ function render(){
   $("q").hidden=$("chips").hidden=!code;
   if(!code){$("empty").hidden=false;$("empty").textContent="Choose a language above to see its news outlets.";$("count").textContent="";return}
   const L=DATA.find(l=>l.code===code);
+  if(!L){$("empty").hidden=false;$("empty").textContent="No news sources configured for this language.";return}
   const q=$("q").value.trim().toLowerCase();
-  const items=L.outlets.filter(o=>(FAILS[o[1]]||0)<2&&(!type||o[2]===type)&&(!q||o[0].toLowerCase().includes(q)||o[1].includes(q)));
+  const items=L.outlets.filter(o=>(FAILS[o[1]]||0)<2&&(!type||o[2]===type)&&(!q||o[0].toLowerCase().includes(q)||o[1].toLowerCase().includes(q)));
   $("count").textContent=items.length+" outlets · "+L.name;
   $("empty").hidden=items.length>0;
   $("empty").textContent="No outlets match.";
@@ -87,20 +116,75 @@ function render(){
   list.append(frag);
 }
 
+function selectCountry(code,preferredLang="",remember=false){
+  code=(code||"").toUpperCase();
+  const country=ROOT.countries?.[code];
+  if(!country){
+    const fallback=ROOT.defaultCountry||"IN";
+    $("country").value=fallback;
+    const fb=ROOT.countries?.[fallback];
+    setHeader(fb);fillLanguages(fb,preferredLang);render();
+    $("empty").hidden=false;
+    $("empty").textContent="News sources for "+displayCountry(code)+" are not configured yet. Showing "+fb.name+" instead.";
+    return;
+  }
+  $("country").value=code;
+  if(remember)store.set("country",code);
+  setHeader(country);fillLanguages(country,preferredLang);$("q").value="";type="";
+  [...$("chips").children].forEach((c,i)=>c.setAttribute("aria-pressed",i===0));
+  render();
+}
+
+function localeCountry(){
+  const langs=[...(navigator.languages||[]),navigator.language].filter(Boolean);
+  for(const tag of langs){
+    try{const region=new Intl.Locale(tag).region;if(region)return region.toUpperCase()}catch{}
+    const m=String(tag).match(/[-_]([A-Za-z]{2})$/);if(m)return m[1].toUpperCase();
+  }
+  return "";
+}
+
+async function detectCountry(){
+  const saved=store.get("country");
+  if(saved&&ROOT.countries?.[saved])return saved;
+  try{
+    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),3500);
+    const r=await fetch("https://ipapi.co/country/",{signal:ctrl.signal,cache:"no-store"});
+    clearTimeout(timer);
+    if(r.ok){const code=(await r.text()).trim().toUpperCase();if(/^[A-Z]{2}$/.test(code))return code}
+  }catch{}
+  return localeCountry()||ROOT.defaultCountry||"IN";
+}
+
+function parseHash(){
+  const raw=location.hash.slice(1);
+  if(!raw)return {};
+  const [country,lang]=raw.split("/");
+  return {country:(country||"").toUpperCase(),lang:lang||""};
+}
+function syncHash(){
+  const c=$("country").value,l=$("lang").value;
+  history.replaceState(null,"",c?("#"+c+(l?"/"+l:"")):location.pathname);
+}
+
 async function init(){
   try{
-    const o=window.OUTLETS;
+    ROOT=window.OUTLETS||{};
     const s=await fetch("status.json").then(r=>r.json()).catch(()=>({}));
-    DATA=o.languages;FAILS=s.fails||{};
-    if(s.updated)$("foot").textContent="Links last checked "+new Date(s.updated).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
-    const sel=$("lang");
-    for(const l of DATA){const op=document.createElement("option");op.value=l.code;op.textContent=l.name+(l.native&&l.native!==l.name?" – "+l.native:"");sel.append(op)}
-    const start=location.hash.slice(1)||store.get("lang");
-    if(start&&DATA.some(l=>l.code===start))sel.value=start;
-    render();
-  }catch{$("empty").textContent="Could not load outlets. Check your connection and reload."}
+    FAILS=s.fails||{};
+    if(s.updated)$("foot").textContent="Links last checked "+new Date(s.updated).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+    const csel=$("country");csel.innerHTML="";
+    for(const [code,c] of Object.entries(ROOT.countries||{}).sort((a,b)=>a[1].name.localeCompare(b[1].name))){
+      const op=document.createElement("option");op.value=code;op.textContent=c.name;csel.append(op);
+    }
+    const hash=parseHash();
+    const start=hash.country&&ROOT.countries?.[hash.country]?hash.country:await detectCountry();
+    selectCountry(start,hash.lang,false);syncHash();
+  }catch(e){$("empty").textContent="Could not load outlets. Check your connection and reload."}
 }
-$("lang").addEventListener("change",e=>{store.set("lang",e.target.value);history.replaceState(null,"",e.target.value?"#"+e.target.value:location.pathname);$("q").value="";render()});
+
+$("country").addEventListener("change",e=>{selectCountry(e.target.value,"",true);syncHash()});
+$("lang").addEventListener("change",e=>{store.set("lang:"+$("country").value,e.target.value);$("q").value="";render();syncHash()});
 $("q").addEventListener("input",render);
 $("chips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;type=b.dataset.t;[...$("chips").children].forEach(c=>c.setAttribute("aria-pressed",c===b));render()});
 init();
