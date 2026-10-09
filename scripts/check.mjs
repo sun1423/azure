@@ -4,8 +4,13 @@ const data = JSON.parse(fs.readFileSync("public/outlets.js", "utf8").replace(/^w
 let prev = { fails: {} };
 try { prev = JSON.parse(fs.readFileSync("public/status.json", "utf8")); } catch {}
 
-const urls = [...new Set(data.languages.flatMap(l => l.outlets.map(o => o[1])))];
-const UA = "Mozilla/5.0 (compatible; IndiaNewsHubLinkCheck/1.0)";
+// v2 stores languages under countries. Keep v1 compatibility so this checker
+// also works safely during deployment/rollback.
+const languages = data.countries
+  ? Object.values(data.countries).flatMap(c => c.languages || [])
+  : (data.languages || []);
+const urls = [...new Set(languages.flatMap(l => (l.outlets || []).map(o => o[1])))];
+const UA = "Mozilla/5.0 (compatible; LocalNewsHubLinkCheck/2.0)";
 // 401/403/429 = site is up but blocks bots, so not counted as broken
 const OK = s => s < 400 || [401, 403, 405, 429, 999].includes(s);
 
@@ -34,6 +39,6 @@ await Promise.all(Array.from({ length: 10 }, async () => {
 }));
 
 fs.writeFileSync("public/status.json", JSON.stringify({ updated: new Date().toISOString(), fails }, null, 1));
-console.log(`Checked ${urls.length}. Failing: ${broken.length}`);
+console.log(`Checked ${urls.length} across ${data.countries ? Object.keys(data.countries).length + " countries" : languages.length + " languages"}. Failing: ${broken.length}`);
 broken.forEach(b => console.log(" ", b));
 console.log("Links failing 2 weeks in a row are hidden from the site automatically.");
