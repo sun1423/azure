@@ -20,6 +20,13 @@ main{max-width:720px;margin:0 auto;padding:14px 14px 40px}
 .controls{position:sticky;top:0;z-index:5;background:var(--bg);padding:8px 0 10px;display:grid;gap:8px}
 select,input{width:100%;font:inherit;padding:13px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)}
 select:focus,input:focus,a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.country-picker{position:relative}
+.country-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.14)}
+.country-menu[hidden]{display:none}
+.country-option{display:block;width:100%;text-align:left;font:inherit;padding:11px 12px;border:0;border-bottom:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.country-option:last-child{border-bottom:0}
+.country-option:hover,.country-option:focus{background:var(--chip)}
+.country-none{padding:12px;color:var(--mute);font-size:.9rem}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 @media(max-width:520px){.row{grid-template-columns:1fr}}
 .chips{display:flex;gap:6px;overflow-x:auto}
@@ -45,7 +52,11 @@ footer{color:var(--mute);font-size:.78rem;text-align:center;padding:0 14px 24px}
 <main>
   <div class="controls">
     <div class="row">
-      <select id="country" aria-label="Select country"><option value="">Detecting country…</option></select>
+      <div class="country-picker">
+        <input id="countrySearch" type="search" placeholder="Detecting country…" aria-label="Search and select country" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="countryMenu">
+        <div id="countryMenu" class="country-menu" role="listbox" hidden></div>
+        <input id="country" type="hidden" value="">
+      </div>
       <select id="lang" aria-label="Select language"><option value="">Select language</option></select>
     </div>
     <input id="q" type="search" placeholder="Search outlets" aria-label="Search outlets" hidden>
@@ -123,16 +134,41 @@ function selectCountry(code,preferredLang="",remember=false){
     const fallback=ROOT.defaultCountry||"IN";
     $("country").value=fallback;
     const fb=ROOT.countries?.[fallback];
+    $("countrySearch").value=fb?.name||fallback;
     setHeader(fb);fillLanguages(fb,preferredLang);render();
     $("empty").hidden=false;
     $("empty").textContent="News sources for "+displayCountry(code)+" are not configured yet. Showing "+fb.name+" instead.";
     return;
   }
   $("country").value=code;
-  if(remember)store.set("country",code);
+  $("countrySearch").value=country.name;
+  closeCountryMenu();
   setHeader(country);fillLanguages(country,preferredLang);$("q").value="";type="";
   [...$("chips").children].forEach((c,i)=>c.setAttribute("aria-pressed",i===0));
   render();
+}
+
+function countryEntries(){
+  return Object.entries(ROOT.countries||{}).sort((a,b)=>a[1].name.localeCompare(b[1].name));
+}
+function closeCountryMenu(){
+  $("countryMenu").hidden=true;
+  $("countrySearch").setAttribute("aria-expanded","false");
+}
+function showCountryMenu(query=""){
+  const menu=$("countryMenu"),q=query.trim().toLowerCase();
+  menu.innerHTML="";
+  const matches=countryEntries().filter(([code,c])=>!q||c.name.toLowerCase().includes(q)||code.toLowerCase().startsWith(q));
+  if(!matches.length){
+    const d=document.createElement("div");d.className="country-none";d.textContent="No matching country";menu.append(d);
+  }else{
+    const frag=document.createDocumentFragment();
+    for(const [code,c] of matches){
+      const b=document.createElement("button");b.type="button";b.className="country-option";b.dataset.code=code;b.setAttribute("role","option");b.textContent=c.name;frag.append(b);
+    }
+    menu.append(frag);
+  }
+  menu.hidden=false;$("countrySearch").setAttribute("aria-expanded","true");
 }
 
 function localeCountry(){
@@ -145,8 +181,6 @@ function localeCountry(){
 }
 
 async function detectCountry(){
-  const saved=store.get("country");
-  if(saved&&ROOT.countries?.[saved])return saved;
   try{
     const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),3500);
     const r=await fetch("https://ipapi.co/country/",{signal:ctrl.signal,cache:"no-store"});
@@ -173,17 +207,25 @@ async function init(){
     const s=await fetch("status.json").then(r=>r.json()).catch(()=>({}));
     FAILS=s.fails||{};
     if(s.updated)$("foot").textContent="Links last checked "+new Date(s.updated).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
-    const csel=$("country");csel.innerHTML="";
-    for(const [code,c] of Object.entries(ROOT.countries||{}).sort((a,b)=>a[1].name.localeCompare(b[1].name))){
-      const op=document.createElement("option");op.value=code;op.textContent=c.name;csel.append(op);
-    }
     const hash=parseHash();
-    const start=hash.country&&ROOT.countries?.[hash.country]?hash.country:await detectCountry();
-    selectCountry(start,hash.lang,false);syncHash();
+    const start=await detectCountry();
+    const preferredLang=hash.country===start?hash.lang:"";
+    selectCountry(start,preferredLang,false);syncHash();
   }catch(e){$("empty").textContent="Could not load outlets. Check your connection and reload."}
 }
 
-$("country").addEventListener("change",e=>{selectCountry(e.target.value,"",true);syncHash()});
+$("countrySearch").addEventListener("focus",e=>{e.target.select();showCountryMenu("")});
+$("countrySearch").addEventListener("click",e=>{e.target.select();showCountryMenu("")});
+$("countrySearch").addEventListener("input",e=>showCountryMenu(e.target.value));
+$("countrySearch").addEventListener("keydown",e=>{
+  if(e.key==="Escape"){closeCountryMenu();e.target.value=ROOT.countries?.[$("country").value]?.name||""}
+  if(e.key==="Enter"){
+    const first=$("countryMenu").querySelector(".country-option");
+    if(first){e.preventDefault();selectCountry(first.dataset.code,"",false);syncHash()}
+  }
+});
+$("countryMenu").addEventListener("click",e=>{const b=e.target.closest(".country-option");if(!b)return;selectCountry(b.dataset.code,"",false);syncHash()});
+document.addEventListener("click",e=>{if(!e.target.closest(".country-picker"))closeCountryMenu()});
 $("lang").addEventListener("change",e=>{store.set("lang:"+$("country").value,e.target.value);$("q").value="";render();syncHash()});
 $("q").addEventListener("input",render);
 $("chips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;type=b.dataset.t;[...$("chips").children].forEach(c=>c.setAttribute("aria-pressed",c===b));render()});
